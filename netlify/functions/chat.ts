@@ -62,16 +62,23 @@ export default async (req: Request, _context: Context): Promise<Response> => {
 
   const origin = req.headers.get('origin') ?? ''
 
-  const upstream = await fetch(OPENROUTER_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': origin,
-      'X-Title': 'Qubefy',
-    },
-    body: JSON.stringify(body),
-  })
+  let upstream: Response
+  try {
+    upstream = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': origin,
+        'X-Title': 'Qubefy',
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('chat: upstream fetch failed', message)
+    return json({ error: `Upstream fetch failed: ${message}` }, 502)
+  }
 
   const text = await upstream.text()
   return new Response(text, {

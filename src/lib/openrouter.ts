@@ -1,8 +1,15 @@
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool'
 
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image_url'
+      image_url: { url: string; detail?: 'low' | 'high' | 'auto' }
+    }
+
 export interface ChatMessage {
   role: ChatRole
-  content: string
+  content: string | ChatContentPart[]
   name?: string
 }
 

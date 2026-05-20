@@ -1,4 +1,4 @@
-import { useMemo, useReducer } from 'react'
+import { useEffect, useMemo, useReducer, useRef } from 'react'
 import { cellKey, PALETTE, type Cell, type Voxel } from './coords'
 
 export type Tool = 'add' | 'remove'
@@ -6,6 +6,7 @@ export type Tool = 'add' | 'remove'
 type Op =
   | { kind: 'add'; voxel: Voxel }
   | { kind: 'remove'; voxel: Voxel }
+  | { kind: 'clear'; voxels: Voxel[] }
 
 interface State {
   voxels: Map<string, Voxel>
@@ -21,6 +22,7 @@ export type Action =
   | { type: 'SET_COLOR'; color: string }
   | { type: 'SET_TOOL'; tool: Tool }
   | { type: 'LOAD_VOXELS'; voxels: Voxel[] }
+  | { type: 'CLEAR' }
 
 const HISTORY_CAP = 100
 
@@ -74,8 +76,10 @@ function reducer(state: State, action: Action): State {
       const voxels = new Map(state.voxels)
       if (op.kind === 'add') {
         voxels.delete(cellKey(op.voxel))
-      } else {
+      } else if (op.kind === 'remove') {
         voxels.set(cellKey(op.voxel), op.voxel)
+      } else {
+        for (const v of op.voxels) voxels.set(cellKey(v), v)
       }
       return { ...state, voxels, history: state.history.slice(0, -1) }
     }
@@ -88,6 +92,15 @@ function reducer(state: State, action: Action): State {
       for (const v of action.voxels) voxels.set(cellKey(v), v)
       return { ...state, voxels, history: [] }
     }
+    case 'CLEAR': {
+      if (state.voxels.size === 0) return state
+      const snapshot = Array.from(state.voxels.values())
+      return {
+        ...state,
+        voxels: new Map(),
+        history: pushOp(state.history, { kind: 'clear', voxels: snapshot }),
+      }
+    }
   }
 }
 
@@ -97,6 +110,19 @@ export function useVoxelEditor(initialVoxels?: Voxel[]) {
     initialVoxels,
     makeInitialState,
   )
+  // Reload the editor when a fresh initialVoxels reference arrives after mount
+  // (e.g. a freshly generated scene). The first render is already handled by
+  // makeInitialState, so skip it here.
+  const seededRef = useRef(true)
+  useEffect(() => {
+    if (seededRef.current) {
+      seededRef.current = false
+      return
+    }
+    if (!initialVoxels) return
+    dispatch({ type: 'LOAD_VOXELS', voxels: initialVoxels })
+  }, [initialVoxels])
+
   const voxelList = useMemo(
     () => Array.from(state.voxels.values()),
     [state.voxels],

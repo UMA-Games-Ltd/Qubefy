@@ -18,6 +18,20 @@ export function ShareButton({ onShare }: Props) {
   async function handleClick() {
     const token = onShare()
     const url = `${window.location.origin}${window.location.pathname}?s=${token}`
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({
+          title: 'Qubefy scene',
+          text: 'Check out this voxel scene I built in Qubefy',
+          url,
+        })
+        return
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+      }
+    }
+
     try {
       await navigator.clipboard.writeText(url)
       setCopied(true)

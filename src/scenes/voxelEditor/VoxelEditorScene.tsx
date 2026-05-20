@@ -1,13 +1,15 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { BackButton } from '../../components/editor/BackButton'
+import { BasePlaneToggle } from '../../components/editor/BasePlaneToggle'
 import { ColorBar } from '../../components/editor/ColorBar'
 import { ShareButton } from '../../components/editor/ShareButton'
 import { Toolbar } from '../../components/editor/Toolbar'
+import { playAdd, playRemove } from '../../lib/sfx'
 import { BasePlane } from './BasePlane'
 import { Voxels } from './Voxels'
-import { PALETTE, type Cell, type Voxel } from './coords'
+import { cellKey, PALETTE, type Cell, type Voxel } from './coords'
 import { encodeScene } from './share'
 import { useVoxelEditor } from './useVoxelEditor'
 
@@ -19,27 +21,35 @@ interface Props {
 
 export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
   const { state, dispatch, voxelList } = useVoxelEditor(initialVoxels)
+  const [showBasePlane, setShowBasePlane] = useState(true)
 
   const handlePlaneAdd = useCallback(
-    (cell: Cell) =>
+    (cell: Cell) => {
+      if (!state.voxels.has(cellKey(cell))) playAdd()
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
-      }),
-    [dispatch, state.color],
+      })
+    },
+    [dispatch, state.color, state.voxels],
   )
 
   const handleVoxelAdd = useCallback(
-    (cell: Cell) =>
+    (cell: Cell) => {
+      if (!state.voxels.has(cellKey(cell))) playAdd()
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
-      }),
-    [dispatch, state.color],
+      })
+    },
+    [dispatch, state.color, state.voxels],
   )
 
   const handleVoxelRemove = useCallback(
-    (cell: Cell) => dispatch({ type: 'REMOVE_VOXEL', cell }),
+    (cell: Cell) => {
+      playRemove()
+      dispatch({ type: 'REMOVE_VOXEL', cell })
+    },
     [dispatch],
   )
 
@@ -55,13 +65,13 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true }}
         frameloop={active ? 'always' : 'demand'}
-        shadows="soft"
+        shadows="percentage"
       >
-        <hemisphereLight args={['#fff1cf', '#d6b78a', 0.55]} />
+        <hemisphereLight args={['#fbf4e6', '#cbbfa8', 0.6]} />
         <directionalLight
           position={[14, 22, 12]}
           intensity={1.05}
-          color="#ffd9a4"
+          color="#fff7ec"
           castShadow
           shadow-mapSize={[2048, 2048]}
           shadow-bias={-0.0005}
@@ -78,7 +88,9 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
           intensity={0.28}
           color="#f3c44a"
         />
-        <BasePlane onAdd={handlePlaneAdd} enabled={state.tool === 'add'} />
+        {showBasePlane && (
+          <BasePlane onAdd={handlePlaneAdd} enabled={state.tool === 'add'} />
+        )}
         <Voxels
           voxels={voxelList}
           onAdd={handleVoxelAdd}
@@ -96,6 +108,10 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
       </Canvas>
 
       <BackButton onClick={onBack} />
+      <BasePlaneToggle
+        visible={showBasePlane}
+        onToggle={() => setShowBasePlane((v) => !v)}
+      />
       <ShareButton onShare={() => encodeScene(state.voxels)} />
       <ColorBar
         palette={PALETTE}
@@ -108,8 +124,10 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
       <Toolbar
         tool={state.tool}
         canUndo={state.history.length > 0}
+        canClear={state.voxels.size > 0}
         onTool={(tool) => dispatch({ type: 'SET_TOOL', tool })}
         onUndo={() => dispatch({ type: 'UNDO' })}
+        onClear={() => dispatch({ type: 'CLEAR' })}
       />
     </div>
   )
