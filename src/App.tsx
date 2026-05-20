@@ -39,7 +39,7 @@ function App() {
   }, [])
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#f6efe0] text-[#1f1814]">
+    <div className="relative h-dvh w-screen overflow-hidden bg-[#f6efe0] text-[#1f1814]">
       <div
         className="flex h-full w-[200vw] will-change-transform transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
         style={{
@@ -70,14 +70,14 @@ function App() {
           aria-hidden={isEditor}
         >
           <div
-            className="flex h-[200vh] w-full flex-col will-change-transform transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+            className="flex h-[200dvh] w-full flex-col will-change-transform transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
             style={{
               transform: isGenerate ? 'translateY(-100vh)' : 'translateY(0)',
             }}
           >
             {/* Hero pane */}
             <div
-              className={`relative h-screen w-full shrink-0 overflow-hidden ${
+              className={`relative h-dvh w-full shrink-0 overflow-hidden ${
                 isGenerate || isEditor ? 'pointer-events-none' : ''
               }`}
               aria-hidden={isGenerate || isEditor}
@@ -146,7 +146,7 @@ function App() {
 
             {/* Generate pane */}
             <div
-              className={`relative h-screen w-full shrink-0 overflow-hidden ${
+              className={`relative h-dvh w-full shrink-0 overflow-hidden ${
                 !isGenerate ? 'pointer-events-none' : ''
               }`}
               aria-hidden={!isGenerate}

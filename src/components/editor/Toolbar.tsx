@@ -19,7 +19,7 @@ export function Toolbar({
   onClear,
 }: Props) {
   return (
-    <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-[#1f1814]/10 bg-[#fffaf0] p-1.5 shadow-[0_2px_0_var(--color-paper-edge),0_18px_30px_-18px_rgba(31,24,20,0.18)]">
+    <div className="absolute bottom-[max(1.5rem,calc(0.5rem+env(safe-area-inset-bottom)))] left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-[#1f1814]/10 bg-[#fffaf0] p-1.5 shadow-[0_2px_0_var(--color-paper-edge),0_18px_30px_-18px_rgba(31,24,20,0.18)]">
       <ToolbarButton
         active={tool === 'add'}
         onClick={() => onTool('add')}

@@ -24,7 +24,7 @@ export function GenerationInfoPanel({ info, onDismiss }: Props) {
   const { totalTokens, cost, durationMs } = info
 
   return (
-    <div className="pointer-events-auto absolute left-1/2 top-4 z-20 flex -translate-x-1/2 -rotate-[0.4deg] items-center gap-3 rounded-full border border-[#1f1814]/10 bg-[#fffaf0]/95 px-4 py-2 text-xs font-bold text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge),0_10px_22px_-14px_rgba(31,24,20,0.3)] backdrop-blur-sm">
+    <div className="pointer-events-auto absolute left-1/2 top-20 z-20 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 -rotate-[0.4deg] items-center gap-3 rounded-full border border-[#1f1814]/10 bg-[#fffaf0]/95 px-4 py-2 text-xs font-bold text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge),0_10px_22px_-14px_rgba(31,24,20,0.3)] backdrop-blur-sm sm:top-4">
       <span className="font-display text-sm tracking-wide text-[#dd6a4a]">
         {formatCost(cost)}
       </span>

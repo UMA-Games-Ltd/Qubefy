@@ -41,8 +41,8 @@ export function GenerateScene({
   onComplete,
   onStatusChange,
 }: Props) {
-  const [modelId, setModelId] = useState<string>(GENERATE_MODELS[0].id)
-  const [scheme, setScheme] = useState<GenerateScheme>('points')
+  const [modelId, setModelId] = useState<string>('google/gemini-3.5-flash')
+  const [scheme, setScheme] = useState<GenerateScheme>('code')
   const [effort, setEffort] = useState<EffortPreset>('medium')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
