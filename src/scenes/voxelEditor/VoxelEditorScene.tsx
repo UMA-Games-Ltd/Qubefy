@@ -4,11 +4,13 @@ import { OrbitControls } from '@react-three/drei'
 import { BackButton } from '../../components/editor/BackButton'
 import { BasePlaneToggle } from '../../components/editor/BasePlaneToggle'
 import { ColorBar } from '../../components/editor/ColorBar'
+import { GenerationInfoPanel } from '../../components/editor/GenerationInfoPanel'
 import { ShareButton } from '../../components/editor/ShareButton'
 import { Toolbar } from '../../components/editor/Toolbar'
+import type { GenerationInfo } from '../../capture/generateVoxelScene'
 import { playAdd, playRemove } from '../../lib/sfx'
 import { BasePlane } from './BasePlane'
-import { Voxels } from './Voxels'
+import { Voxels, type NormalTuple } from './Voxels'
 import { cellKey, PALETTE, type Cell, type Voxel } from './coords'
 import { encodeScene } from './share'
 import { useVoxelEditor } from './useVoxelEditor'
@@ -17,32 +19,49 @@ interface Props {
   active: boolean
   onBack: () => void
   initialVoxels?: Voxel[]
+  generationInfo?: GenerationInfo | null
+  onDismissGenerationInfo?: () => void
 }
 
-export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
+export function VoxelEditorScene({
+  active,
+  onBack,
+  initialVoxels,
+  generationInfo,
+  onDismissGenerationInfo,
+}: Props) {
   const { state, dispatch, voxelList } = useVoxelEditor(initialVoxels)
   const [showBasePlane, setShowBasePlane] = useState(true)
+  const [pendingNormals] = useState<Map<string, NormalTuple>>(() => new Map())
 
   const handlePlaneAdd = useCallback(
     (cell: Cell) => {
-      if (!state.voxels.has(cellKey(cell))) playAdd()
+      const k = cellKey(cell)
+      if (!state.voxels.has(k)) {
+        playAdd()
+        pendingNormals.set(k, [0, 1, 0])
+      }
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
       })
     },
-    [dispatch, state.color, state.voxels],
+    [dispatch, pendingNormals, state.color, state.voxels],
   )
 
   const handleVoxelAdd = useCallback(
-    (cell: Cell) => {
-      if (!state.voxels.has(cellKey(cell))) playAdd()
+    (cell: Cell, normal: NormalTuple) => {
+      const k = cellKey(cell)
+      if (!state.voxels.has(k)) {
+        playAdd()
+        pendingNormals.set(k, normal)
+      }
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
       })
     },
-    [dispatch, state.color, state.voxels],
+    [dispatch, pendingNormals, state.color, state.voxels],
   )
 
   const handleVoxelRemove = useCallback(
@@ -96,6 +115,7 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
           onAdd={handleVoxelAdd}
           onRemove={handleVoxelRemove}
           tool={state.tool}
+          pendingNormals={pendingNormals}
         />
         <OrbitControls
           target={[0, 4, 0]}
@@ -108,6 +128,12 @@ export function VoxelEditorScene({ active, onBack, initialVoxels }: Props) {
       </Canvas>
 
       <BackButton onClick={onBack} />
+      {generationInfo && (
+        <GenerationInfoPanel
+          info={generationInfo}
+          onDismiss={onDismissGenerationInfo}
+        />
+      )}
       <BasePlaneToggle
         visible={showBasePlane}
         onToggle={() => setShowBasePlane((v) => !v)}

@@ -11,28 +11,34 @@ import {
 } from './coords'
 import type { Tool } from './useVoxelEditor'
 
+export type NormalTuple = [number, number, number]
+
 interface Props {
   voxels: Voxel[]
-  onAdd: (cell: Cell) => void
+  onAdd: (cell: Cell, normal: NormalTuple) => void
   onRemove: (cell: Cell) => void
   tool: Tool
+  pendingNormals: Map<string, NormalTuple>
 }
 
 const MAX_INSTANCES = 8000
 const APPEAR_DUR = 0.42
 const WOBBLE_FREQ = 14
 const WOBBLE_DECAY = 9
-const OVERSHOOT_AMP = 0.28
+const LANDING_AMP = 0.35
+const OVERSHOOT_C = 2.7
 const FLY_DUR = 0.65
 const STAGGER_PER_LAYER = 0.07
 const FLY_DIST_MIN = 18
 const FLY_DIST_MAX = 30
+const TINY = 0.001
 
 type AnimEntry = {
   t0: number
   delay: number
   from: THREE.Vector3 | null
   to: THREE.Vector3
+  normal: THREE.Vector3 | null
 }
 
 function randomFlyFrom(target: THREE.Vector3): THREE.Vector3 {
@@ -47,7 +53,21 @@ function randomFlyFrom(target: THREE.Vector3): THREE.Vector3 {
   )
 }
 
-export function Voxels({ voxels, onAdd, onRemove, tool }: Props) {
+function easeOutBack(p: number): number {
+  return (
+    1 +
+    (OVERSHOOT_C + 1) * Math.pow(p - 1, 3) +
+    OVERSHOOT_C * Math.pow(p - 1, 2)
+  )
+}
+
+export function Voxels({
+  voxels,
+  onAdd,
+  onRemove,
+  tool,
+  pendingNormals,
+}: Props) {
   const animRef = useRef<Map<string, AnimEntry>>(new Map())
   const refsRef = useRef<Map<string, THREE.Object3D>>(new Map())
   const seenRef = useRef<Set<string>>(new Set())
@@ -78,7 +98,7 @@ export function Voxels({ voxels, onAdd, onRemove, tool }: Props) {
       const dt = t - anim.t0 - anim.delay
 
       if (dt < 0) {
-        obj.scale.setScalar(0.001)
+        obj.scale.setScalar(TINY)
         if (anim.from) obj.position.copy(anim.from)
         continue
       }
@@ -105,22 +125,35 @@ export function Voxels({ voxels, onAdd, onRemove, tool }: Props) {
           const wobble =
             Math.sin(wdt * WOBBLE_FREQ) *
             Math.exp(-wdt * WOBBLE_DECAY) *
-            OVERSHOOT_AMP
+            LANDING_AMP
           obj.scale.setScalar(1 + wobble)
         }
+        continue
+      }
+
+      if (dt >= APPEAR_DUR) {
+        obj.scale.set(1, 1, 1)
+        obj.position.copy(anim.to)
+        animRef.current.delete(key)
+        continue
+      }
+      const p = dt / APPEAR_DUR
+      const s = easeOutBack(p)
+      const n = anim.normal
+      if (n) {
+        obj.scale.set(
+          Math.abs(n.x) > 0.5 ? s : 1,
+          Math.abs(n.y) > 0.5 ? s : 1,
+          Math.abs(n.z) > 0.5 ? s : 1,
+        )
+        obj.position.set(
+          anim.to.x + n.x * (s - 1) * 0.5,
+          anim.to.y + n.y * (s - 1) * 0.5,
+          anim.to.z + n.z * (s - 1) * 0.5,
+        )
       } else {
-        if (dt >= APPEAR_DUR) {
-          obj.scale.setScalar(1)
-          animRef.current.delete(key)
-          continue
-        }
-        const p = dt / APPEAR_DUR
-        const ease = 1 - Math.pow(1 - p, 3)
-        const wobble =
-          Math.sin(dt * WOBBLE_FREQ) *
-          Math.exp(-dt * WOBBLE_DECAY) *
-          OVERSHOOT_AMP
-        obj.scale.setScalar(ease + wobble)
+        obj.scale.setScalar(s)
+        obj.position.copy(anim.to)
       }
     }
   })
@@ -132,13 +165,15 @@ export function Voxels({ voxels, onAdd, onRemove, tool }: Props) {
       return
     }
     if (!e.face) return
-    const n = e.face.normal
+    const nx = Math.round(e.face.normal.x)
+    const ny = Math.round(e.face.normal.y)
+    const nz = Math.round(e.face.normal.z)
     const target: Cell = {
-      x: voxel.x + Math.round(n.x),
-      y: voxel.y + Math.round(n.y),
-      z: voxel.z + Math.round(n.z),
+      x: voxel.x + nx,
+      y: voxel.y + ny,
+      z: voxel.z + nz,
     }
-    if (inBounds(target)) onAdd(target)
+    if (inBounds(target)) onAdd(target, [nx, ny, nz])
   }
 
   return (
@@ -171,14 +206,41 @@ export function Voxels({ voxels, onAdd, onRemove, tool }: Props) {
                   const isInitial = !initializedRef.current
                   const from = isInitial ? randomFlyFrom(to) : null
                   const delay = isInitial ? v.y * STAGGER_PER_LAYER : 0
+                  let normal: THREE.Vector3 | null = null
+                  const pending = pendingNormals.get(k)
+                  if (pending) {
+                    normal = new THREE.Vector3(
+                      pending[0],
+                      pending[1],
+                      pending[2],
+                    )
+                    pendingNormals.delete(k)
+                  }
                   animRef.current.set(k, {
                     t0: clock.elapsedTime,
                     delay,
                     from,
                     to,
+                    normal,
                   })
-                  o.position.copy(from ?? to)
-                  o.scale.setScalar(0.001)
+                  if (from) {
+                    o.position.copy(from)
+                    o.scale.setScalar(TINY)
+                  } else if (normal) {
+                    o.scale.set(
+                      Math.abs(normal.x) > 0.5 ? TINY : 1,
+                      Math.abs(normal.y) > 0.5 ? TINY : 1,
+                      Math.abs(normal.z) > 0.5 ? TINY : 1,
+                    )
+                    o.position.set(
+                      to.x + normal.x * (TINY - 1) * 0.5,
+                      to.y + normal.y * (TINY - 1) * 0.5,
+                      to.z + normal.z * (TINY - 1) * 0.5,
+                    )
+                  } else {
+                    o.position.copy(to)
+                    o.scale.setScalar(TINY)
+                  }
                 }
               } else {
                 refsRef.current.delete(k)

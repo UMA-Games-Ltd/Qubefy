@@ -4,6 +4,7 @@ import { VoxelEditorScene } from './scenes/voxelEditor/VoxelEditorScene'
 import { decodeScene } from './scenes/voxelEditor/share'
 import type { Voxel } from './scenes/voxelEditor/coords'
 import { GenerateScene, type GenerationStatus } from './capture/GenerateScene'
+import type { GenerationInfo } from './capture/generateVoxelScene'
 import { PhotoCaptureButtons } from './capture/PhotoCaptureButtons'
 import type { CapturedImage } from './capture/types'
 
@@ -20,6 +21,9 @@ function App() {
   const [view, setView] = useState<View>(sharedVoxels ? 'editor' : 'hero')
   const [captured, setCaptured] = useState<CapturedImage | null>(null)
   const [generatedVoxels, setGeneratedVoxels] = useState<Voxel[] | null>(null)
+  const [generationInfo, setGenerationInfo] = useState<GenerationInfo | null>(
+    null,
+  )
   const [genStatus, setGenStatus] = useState<GenerationStatus>({
     generating: false,
     progress: 0,
@@ -53,6 +57,8 @@ function App() {
             active={isEditor}
             onBack={() => setView('hero')}
             initialVoxels={generatedVoxels ?? sharedVoxels ?? undefined}
+            generationInfo={generationInfo}
+            onDismissGenerationInfo={() => setGenerationInfo(null)}
           />
         </div>
 
@@ -154,8 +160,9 @@ function App() {
                   // running so the chip can return to the same scene.
                   if (!isBusy) setCaptured(null)
                 }}
-                onComplete={(voxels) => {
+                onComplete={(voxels, info) => {
                   setGeneratedVoxels(voxels)
+                  setGenerationInfo(info)
                   setCaptured(null)
                   setView('editor')
                 }}

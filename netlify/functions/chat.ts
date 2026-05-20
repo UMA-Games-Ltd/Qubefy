@@ -11,6 +11,7 @@ const ALLOWED_FIELDS = [
   'top_p',
   'seed',
   'stop',
+  'usage',
 ] as const
 
 type AllowedField = (typeof ALLOWED_FIELDS)[number]
@@ -81,6 +82,12 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   }
 
   const text = await upstream.text()
+  if (!upstream.ok) {
+    console.error(
+      `chat: upstream ${upstream.status} for model=${String(body.model)}`,
+      text.slice(0, 2000),
+    )
+  }
   return new Response(text, {
     status: upstream.status,
     headers: { 'content-type': 'application/json' },

@@ -37,6 +37,9 @@ export interface ChatRequest {
   top_p?: number
   seed?: number
   stop?: string | string[]
+  // OpenRouter usage accounting. Setting `include: true` makes the response
+  // `usage` block include a `cost` field (USD) alongside the token counts.
+  usage?: { include: boolean }
 }
 
 export interface ChatChoice {
@@ -53,6 +56,8 @@ export interface ChatResponse {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+    // Present when the request was sent with `usage: { include: true }`.
+    cost?: number
   }
 }
 
@@ -84,14 +89,34 @@ export async function chat(req: ChatRequest): Promise<ChatResponse> {
   }
 
   if (!res.ok) {
-    const msg =
-      (parsed as { error?: string | { message?: string } } | null)?.error
-    const message =
-      typeof msg === 'string'
-        ? msg
-        : msg && typeof msg === 'object' && 'message' in msg
-          ? String(msg.message)
-          : `Request failed (${res.status})`
+    console.error(`/api/chat ${res.status}`, parsed)
+    const err = (
+      parsed as {
+        error?:
+          | string
+          | { message?: string; metadata?: { raw?: unknown; provider_name?: string } }
+      } | null
+    )?.error
+    let message: string
+    if (typeof err === 'string') {
+      message = err
+    } else if (err && typeof err === 'object') {
+      const base = err.message ?? `Request failed (${res.status})`
+      const raw = err.metadata?.raw
+      const provider = err.metadata?.provider_name
+      const rawStr =
+        typeof raw === 'string'
+          ? raw
+          : raw != null
+            ? JSON.stringify(raw)
+            : ''
+      message =
+        rawStr.length > 0
+          ? `${base}${provider ? ` (${provider})` : ''}: ${rawStr.slice(0, 600)}`
+          : base
+    } else {
+      message = `Request failed (${res.status}): ${text.slice(0, 400)}`
+    }
     throw new ChatError(res.status, parsed, message)
   }
 

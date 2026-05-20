@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { BackButton } from '../components/editor/BackButton'
 import { GENERATE_MODELS } from './models'
-import { generateVoxelScene } from './generateVoxelScene'
+import { generateVoxelScene, type GenerationInfo } from './generateVoxelScene'
 import type { CapturedImage, EffortPreset } from './types'
 import type { Voxel } from '../scenes/voxelEditor/coords'
 
@@ -15,7 +15,7 @@ interface Props {
   image: CapturedImage | null
   active: boolean
   onBack: () => void
-  onComplete: (voxels: Voxel[]) => void
+  onComplete: (voxels: Voxel[], info: GenerationInfo | null) => void
   onStatusChange?: (status: GenerationStatus) => void
 }
 
@@ -46,6 +46,7 @@ export function GenerateScene({
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const rafRef = useRef<number | null>(null)
+  const lastPushRef = useRef(0)
 
   // Hold the latest values in refs so the generation effect can depend only on
   // `generating` — re-running it on every prop change (e.g. parent re-renders
@@ -62,9 +63,23 @@ export function GenerateScene({
   onCompleteRef.current = onComplete
   onStatusChangeRef.current = onStatusChange
 
-  useEffect(() => {
-    onStatusChangeRef.current?.({ generating, progress, error })
-  }, [generating, progress, error])
+  // Push status changes directly from the callsite that produces them — not
+  // via a useEffect on [generating, progress, error]. The effect form re-fired
+  // on every RAF tick (~60 Hz), and each call setState'd the parent, which
+  // re-rendered the whole App tree (including the editor's R3F canvas) at
+  // 60 Hz. That cascade tripped React's nested-update limit.
+  const pushStatus = (status: GenerationStatus) => {
+    lastPushRef.current = performance.now()
+    onStatusChangeRef.current?.(status)
+  }
+  // Progress updates fire from RAF; throttle the parent push so the chip
+  // refreshes smoothly without forcing a 60 Hz re-render across the App.
+  const pushProgress = (value: number) => {
+    const now = performance.now()
+    if (now - lastPushRef.current < 100) return
+    lastPushRef.current = now
+    onStatusChangeRef.current?.({ generating: true, progress: value, error: null })
+  }
 
   useEffect(() => {
     if (!generating) return
@@ -82,27 +97,32 @@ export function GenerateScene({
     const tick = (now: number) => {
       const eased = PROGRESS_CEILING * (1 - Math.exp(-(now - startedAt) / PROGRESS_TAU_MS))
       setProgress(eased)
+      pushProgress(eased)
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
 
     generateVoxelScene(img, modelIdRef.current, effortRef.current)
-      .then((voxels) => {
+      .then(({ voxels, info }) => {
         if (cancelled) return
         setProgress(1)
+        pushStatus({ generating: true, progress: 1, error: null })
         window.setTimeout(() => {
           if (cancelled) return
           setGenerating(false)
-          onCompleteRef.current(voxels)
+          pushStatus({ generating: false, progress: 1, error: null })
+          onCompleteRef.current(voxels, info)
         }, 250)
       })
       .catch((err: unknown) => {
         if (cancelled) return
+        console.error('generateVoxelScene failed', err)
         const message =
           err instanceof Error ? err.message : 'Generation failed'
         setError(message)
         setGenerating(false)
         setProgress(0)
+        pushStatus({ generating: false, progress: 0, error: message })
       })
 
     return () => {
@@ -122,6 +142,7 @@ export function GenerateScene({
     setError(null)
     setProgress(0)
     setGenerating(true)
+    pushStatus({ generating: true, progress: 0, error: null })
   }
 
   const pct = Math.round(progress * 100)

@@ -7,7 +7,7 @@ import {
 } from '../scenes/voxelEditor/coords'
 import type { CapturedImage, EffortPreset } from './types'
 
-const MAX_VOXELS = 8000
+const MAX_VOXELS = 2000
 
 const MAX_INDEX = GRID_SIZE - 1
 const MAX_COLOR = PALETTE_ENTRIES.length - 1
@@ -20,33 +20,37 @@ const SYSTEM_PROMPT = `You convert a single source image into a tiny 3D voxel sc
 
 # Coordinate system
 - Axes: X = right, Y = up, Z = forward (away from viewer).
-- Each axis runs from 0 to ${MAX_INDEX} (inclusive). Every voxel MUST satisfy 0 ≤ x ≤ ${MAX_INDEX}, 0 ≤ y ≤ ${MAX_INDEX}, 0 ≤ z ≤ ${MAX_INDEX}.
+- Each axis runs from 0 to ${MAX_INDEX} (inclusive). Every cell MUST satisfy 0 ≤ x ≤ ${MAX_INDEX}, 0 ≤ y ≤ ${MAX_INDEX}, 0 ≤ z ≤ ${MAX_INDEX}.
 - y = 0 is the ground plane. Build on top of it; do not float objects unless they are intentionally airborne (clouds, birds, lamps, fruit on a branch).
 - Centre the composition roughly around x ≈ ${Math.floor(GRID_SIZE / 2)}, z ≈ ${Math.floor(GRID_SIZE / 2)} unless the scene demands otherwise.
-- The grid is small. Objects must be SIMPLIFIED. A whole tree might be only 30–80 voxels.
+- The grid is small. Objects must be SIMPLIFIED. A whole tree might only fill 30–80 cells.
 
-# Process — populate \`analysis\` BEFORE \`voxels\`
-1. Describe what you see in 1–2 sentences. Is the source a photo of a real 3D scene, or a 2D drawing / sketch / icon / painting?
-2. Enumerate the distinct objects. For each, give it a short name and estimate its real-world size and depth relative to the others.
-3. If the source is 2D (drawing, sketch, icon, painting), INFER the 3D shape the artist intended. A circle on paper might be a sphere, a tree crown, the sun, a wheel — reason about what each shape REPRESENTS, not just its 2D outline.
-4. Plan placement inside the ${GRID_SIZE}³ grid. Assign each object its own footprint so they DO NOT OCCUPY THE SAME CELLS. Use depth (z) to separate things that overlap in the 2D image. Leave breathing room — adjacent objects should not touch unless they physically connect (a trunk meeting its foliage, a roof on a house).
-5. Choose materials from the palette by INTENT, not by raw pixel colour. A tree trunk is "dark brown" + foliage "green" / "dark green", not whatever exact hex the photo had. A sun is "yellow", not "amber". Pick the material that BEST describes what the cell IS.
+# Planning (think before emitting)
+- Identify the distinct objects in the source. If it is a 2D drawing/sketch/icon/painting, INFER the 3D shape each element represents — a circle might be a sphere, a tree crown, the sun, a wheel.
+- Estimate each object's relative size and depth, then plan placements inside the ${GRID_SIZE}³ grid so objects DO NOT OCCUPY THE SAME CELLS. Use z to separate things that overlap in 2D. Leave breathing room — adjacent objects should not touch unless they physically connect (trunk meeting foliage, roof on a house).
+- Choose materials from the palette by INTENT, not by raw pixel colour. A tree trunk is "dark brown" + foliage "green" / "dark green". A sun is "yellow", not "amber". Pick the material that BEST describes what the cell IS.
 
 # Palette — choose \`c\` (material index) from this list
 \`c\` is a single byte (0–${MAX_COLOR}). Materials available:
 ${PALETTE_LINES}
 
+# Geometry — one filled cell per tuple
+Group cells belonging to the same real-world object into one entry in \`objects\`. Each entry has a \`points\` array; each tuple in it is a flat \`[x, y, z, c]\`.
+Each object's \`points\` should be cohesive — all cells in one entry belong to the same thing.
+Empty cells are implicit — never emit a tuple for empty space.
+Later tuples overwrite earlier ones at the same (x, y, z), across objects too, so you can layer detail on top of a base.
+
 # Density guidance — adjust by the effort field in the user message
-- weak:   ~30–200 voxels. Rough silhouettes only, one block per major feature.
-- medium: ~200–800 voxels. Recognisable shapes with light detail and shading.
-- strong: ~800–3000 voxels. Full shapes with surface texture and multi-tone shading.
-- Hard cap: never emit more than ${MAX_VOXELS} voxels under any effort.
+- weak:   ~20–80 filled cells total. Minimal blocky silhouettes; one tuple per major feature.
+- medium: ~80–300 filled cells total. Recognisable shapes with light detail and shading.
+- strong: ~300–1000 filled cells total. Full shapes with surface texture and multi-tone shading.
+- Hard cap: never produce more than ${MAX_VOXELS} filled cells under any effort.
 
 # Output rules
 - Return STRICT JSON matching the provided schema. No prose outside the JSON.
-- All x, y, z, c values are integers.
-- Each (x, y, z) appears AT MOST ONCE. No duplicate cells.
-- Prefer fewer, well-placed voxels over noise — every voxel should belong to something.`
+- Each cell is a flat 4-int tuple — NOT an object. Compact form is required.
+  Example: \`{"objects":[{"points":[[10,0,10,5],[10,1,10,5]]},{"points":[[18,18,2,3]]}]}\`
+- Prefer fewer, well-placed cells over noise — every cell should belong to something.`
 
 const VOXEL_SCHEMA = {
   name: 'voxel_scene',
@@ -54,25 +58,24 @@ const VOXEL_SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['analysis', 'voxels'],
+    required: ['objects'],
     properties: {
-      analysis: {
-        type: 'string',
-        description:
-          'Step-by-step scene reasoning: source type, objects, depths, placement plan, palette choices. Populate this before placing voxels.',
-      },
-      voxels: {
+      objects: {
         type: 'array',
-        maxItems: MAX_VOXELS,
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['x', 'y', 'z', 'c'],
+          required: ['points'],
           properties: {
-            x: { type: 'integer', minimum: 0, maximum: MAX_INDEX },
-            y: { type: 'integer', minimum: 0, maximum: MAX_INDEX },
-            z: { type: 'integer', minimum: 0, maximum: MAX_INDEX },
-            c: { type: 'integer', minimum: 0, maximum: MAX_COLOR },
+            // Flat 4-int tuples [x, y, z, c] — the object form is ~3× the
+            // tokens and blows past Haiku's output budget on medium+ efforts.
+            // No `minItems`/`maxItems` — Bedrock rejects array length
+            // constraints; tuple length and value ranges are enforced
+            // client-side in `toVoxels`.
+            points: {
+              type: 'array',
+              items: { type: 'array', items: { type: 'integer' } },
+            },
           },
         },
       },
@@ -80,22 +83,20 @@ const VOXEL_SCHEMA = {
   },
 } as const
 
-interface RawVoxel {
-  x: number
-  y: number
-  z: number
-  c: number
+type RawTuple = number[]
+
+interface RawObject {
+  points?: RawTuple[]
 }
 
 interface RawScene {
-  analysis?: string
-  voxels?: RawVoxel[]
+  objects?: RawObject[]
 }
 
 function maxTokensForEffort(effort: EffortPreset): number {
-  if (effort === 'strong') return 16000
-  if (effort === 'medium') return 8000
-  return 3000
+  if (effort === 'strong') return 19000
+  if (effort === 'medium') return 8200
+  return 4000
 }
 
 function isInt(n: unknown): n is number {
@@ -110,28 +111,102 @@ function parseScene(raw: string): RawScene {
   }
 }
 
-function toVoxels(scene: RawScene): Voxel[] {
-  if (!scene.voxels || !Array.isArray(scene.voxels)) {
-    throw new ChatError(200, scene, 'Model response missing `voxels` array')
-  }
+function clamp(n: number, lo: number, hi: number): number {
+  return n < lo ? lo : n > hi ? hi : n
+}
 
-  const byKey = new Map<string, Voxel>()
-  for (const v of scene.voxels) {
-    if (!v || typeof v !== 'object') continue
-    if (!isInt(v.x) || !isInt(v.y) || !isInt(v.z) || !isInt(v.c)) continue
-    if (v.x < 0 || v.x > MAX_INDEX) continue
-    if (v.y < 0 || v.y > MAX_INDEX) continue
-    if (v.z < 0 || v.z > MAX_INDEX) continue
-    if (v.c < 0 || v.c > MAX_COLOR) continue
+function writeCell(
+  byKey: Map<string, Voxel>,
+  x: number,
+  y: number,
+  z: number,
+  c: number,
+): boolean {
+  const voxel: Voxel = { x, y, z, color: PALETTE_ENTRIES[c].hex }
+  byKey.set(cellKey(voxel), voxel)
+  return byKey.size >= MAX_VOXELS
+}
 
-    const voxel: Voxel = {
-      x: v.x,
-      y: v.y,
-      z: v.z,
-      color: PALETTE_ENTRIES[v.c].hex,
+// Primitive expansion helpers — currently UNUSED by toVoxels (the model emits
+// only points). Kept for future programmatic callers that may want to build
+// scenes from cuboids/spheres directly without a model round-trip.
+//
+// Each helper returns `true` if MAX_VOXELS has been reached and the caller
+// should stop emitting further primitives.
+
+/** Fill an axis-aligned box `[x, y, z, sx, sy, sz, c]` (min corner + full sizes). */
+export function expandCuboid(byKey: Map<string, Voxel>, t: RawTuple): boolean {
+  if (!Array.isArray(t) || t.length < 7) return false
+  const [x, y, z, sx, sy, sz, c] = t
+  if (!isInt(x) || !isInt(y) || !isInt(z)) return false
+  if (!isInt(sx) || !isInt(sy) || !isInt(sz)) return false
+  if (!isInt(c) || c < 0 || c > MAX_COLOR) return false
+  if (sx < 1 || sy < 1 || sz < 1) return false
+
+  const x0 = clamp(x, 0, MAX_INDEX)
+  const y0 = clamp(y, 0, MAX_INDEX)
+  const z0 = clamp(z, 0, MAX_INDEX)
+  const x1 = clamp(x + sx - 1, 0, MAX_INDEX)
+  const y1 = clamp(y + sy - 1, 0, MAX_INDEX)
+  const z1 = clamp(z + sz - 1, 0, MAX_INDEX)
+
+  for (let cz = z0; cz <= z1; cz++) {
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        if (writeCell(byKey, cx, cy, cz, c)) return true
+      }
     }
-    byKey.set(cellKey(voxel), voxel)
-    if (byKey.size >= MAX_VOXELS) break
+  }
+  return false
+}
+
+/**
+ * Fill a sphere `[x, y, z, r, c]` (center cell + radius). The `+ r` fattens
+ * the test radius slightly so small spheres (r = 1–3) read as round rather
+ * than diamond-shaped — a standard voxel-art trick.
+ */
+export function expandSphere(byKey: Map<string, Voxel>, t: RawTuple): boolean {
+  if (!Array.isArray(t) || t.length < 5) return false
+  const [x, y, z, r, c] = t
+  if (!isInt(x) || !isInt(y) || !isInt(z) || !isInt(r) || !isInt(c)) return false
+  if (c < 0 || c > MAX_COLOR) return false
+  if (r < 1) return false
+
+  const rSq = r * r + r
+  for (let dz = -r; dz <= r; dz++) {
+    const cz = z + dz
+    if (cz < 0 || cz > MAX_INDEX) continue
+    for (let dy = -r; dy <= r; dy++) {
+      const cy = y + dy
+      if (cy < 0 || cy > MAX_INDEX) continue
+      for (let dx = -r; dx <= r; dx++) {
+        const cx = x + dx
+        if (cx < 0 || cx > MAX_INDEX) continue
+        if (dx * dx + dy * dy + dz * dz > rSq) continue
+        if (writeCell(byKey, cx, cy, cz, c)) return true
+      }
+    }
+  }
+  return false
+}
+
+function toVoxels(scene: RawScene): Voxel[] {
+  const byKey = new Map<string, Voxel>()
+
+  if (Array.isArray(scene.objects)) {
+    outer: for (const obj of scene.objects) {
+      if (!obj || !Array.isArray(obj.points)) continue
+      for (const t of obj.points) {
+        if (!Array.isArray(t) || t.length < 4) continue
+        const [x, y, z, c] = t
+        if (!isInt(x) || !isInt(y) || !isInt(z) || !isInt(c)) continue
+        if (x < 0 || x > MAX_INDEX) continue
+        if (y < 0 || y > MAX_INDEX) continue
+        if (z < 0 || z > MAX_INDEX) continue
+        if (c < 0 || c > MAX_COLOR) continue
+        if (writeCell(byKey, x, y, z, c)) break outer
+      }
+    }
   }
 
   if (byKey.size === 0) {
@@ -170,11 +245,25 @@ async function downsizeImage(image: CapturedImage): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.85)
 }
 
+export interface GenerationInfo {
+  model: string
+  effort: EffortPreset
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cost?: number
+}
+
+export interface GenerationResult {
+  voxels: Voxel[]
+  info: GenerationInfo | null
+}
+
 export async function generateVoxelScene(
   image: CapturedImage,
   modelId: string,
   effort: EffortPreset,
-): Promise<Voxel[]> {
+): Promise<GenerationResult> {
   const dataUrl = await downsizeImage(image)
 
   const messages: ChatMessage[] = [
@@ -200,7 +289,26 @@ export async function generateVoxelScene(
     response_format: { type: 'json_schema', json_schema: VOXEL_SCHEMA },
     temperature: 0.4,
     max_tokens: maxTokensForEffort(effort),
+    usage: { include: true },
   })
+
+  let info: GenerationInfo | null = null
+  if (res.usage) {
+    const { prompt_tokens, completion_tokens, total_tokens, cost } = res.usage
+    info = {
+      model: modelId,
+      effort,
+      promptTokens: prompt_tokens,
+      completionTokens: completion_tokens,
+      totalTokens: total_tokens,
+      cost: typeof cost === 'number' ? cost : undefined,
+    }
+    const costStr =
+      typeof cost === 'number' ? `$${cost.toFixed(6)}` : 'n/a'
+    console.log(
+      `[generateVoxelScene] ${modelId} (${effort}) — tokens: ${prompt_tokens} in / ${completion_tokens} out / ${total_tokens} total · cost: ${costStr}`,
+    )
+  }
 
   // OpenRouter sometimes returns 200 with an error body (no `choices`) — e.g.
   // upstream provider failure or content moderation. Surface that message
@@ -226,5 +334,5 @@ export async function generateVoxelScene(
     )
   }
 
-  return toVoxels(parseScene(content))
+  return { voxels: toVoxels(parseScene(content)), info }
 }
