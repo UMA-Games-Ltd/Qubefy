@@ -55,7 +55,7 @@ function App() {
         >
           <VoxelEditorScene
             active={isEditor}
-            onBack={() => setView('hero')}
+            onBack={() => setView(captured ? 'generate' : 'hero')}
             initialVoxels={generatedVoxels ?? sharedVoxels ?? undefined}
             generationInfo={generationInfo}
             onDismissGenerationInfo={() => setGenerationInfo(null)}
@@ -163,7 +163,6 @@ function App() {
                 onComplete={(voxels, info) => {
                   setGeneratedVoxels(voxels)
                   setGenerationInfo(info)
-                  setCaptured(null)
                   setView('editor')
                 }}
                 onStatusChange={handleStatusChange}

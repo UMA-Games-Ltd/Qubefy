@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BackButton } from '../components/editor/BackButton'
 import { GENERATE_MODELS } from './models'
 import { generateVoxelScene, type GenerationInfo } from './generateVoxelScene'
+import { SCHEMES, type GenerateScheme } from './schemes'
 import type { CapturedImage, EffortPreset } from './types'
 import type { Voxel } from '../scenes/voxelEditor/coords'
 
@@ -41,12 +42,22 @@ export function GenerateScene({
   onStatusChange,
 }: Props) {
   const [modelId, setModelId] = useState<string>(GENERATE_MODELS[0].id)
+  const [scheme, setScheme] = useState<GenerateScheme>('points')
   const [effort, setEffort] = useState<EffortPreset>('medium')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const rafRef = useRef<number | null>(null)
+  const tickerRafRef = useRef<number | null>(null)
   const lastPushRef = useRef(0)
+  const tickerScrollRef = useRef<HTMLDivElement | null>(null)
+  const tickerTextRef = useRef<HTMLSpanElement | null>(null)
+  // Full accumulated reasoning text (newlines collapsed to spaces).
+  const reasoningBufferRef = useRef('')
+  // How many chars of `reasoningBufferRef.current` have been revealed to the
+  // DOM so far. The RAF loop closes the gap toward `length` at a steady rate
+  // so the ticker scrolls smoothly regardless of upstream burstiness.
+  const displayedCharsRef = useRef(0)
 
   // Hold the latest values in refs so the generation effect can depend only on
   // `generating` — re-running it on every prop change (e.g. parent re-renders
@@ -54,11 +65,13 @@ export function GenerateScene({
   // browser's resource budget with multi-MB image payloads.
   const imageRef = useRef(image)
   const modelIdRef = useRef(modelId)
+  const schemeRef = useRef(scheme)
   const effortRef = useRef(effort)
   const onCompleteRef = useRef(onComplete)
   const onStatusChangeRef = useRef(onStatusChange)
   imageRef.current = image
   modelIdRef.current = modelId
+  schemeRef.current = scheme
   effortRef.current = effort
   onCompleteRef.current = onComplete
   onStatusChangeRef.current = onStatusChange
@@ -92,8 +105,51 @@ export function GenerateScene({
     // results instead; in production StrictMode is off and only one fetch
     // ever fires.
     let cancelled = false
+    let receivedFirstChunk = false
     const startedAt = performance.now()
 
+    // Reset ticker between generations.
+    reasoningBufferRef.current = ''
+    displayedCharsRef.current = 0
+    if (tickerTextRef.current) tickerTextRef.current.textContent = ''
+    if (tickerScrollRef.current) tickerScrollRef.current.scrollLeft = 0
+
+    // Smooth ticker — runs while generating. Each frame closes part of the
+    // gap between `displayedCharsRef.current` and the full buffered length,
+    // so the visible text grows at a steady cadence even when the network
+    // delivers reasoning in bursts.
+    const TICKER_TAIL_CHARS = 400
+    // Min chars revealed per frame so the ticker keeps moving even with a
+    // small buffer gap.
+    const MIN_CHARS_PER_FRAME = 0.4
+    // Fraction of the gap to drain each frame — higher = catches up faster
+    // when the model produces a burst; lower = smoother.
+    const DRAIN_FRACTION = 0.06
+
+    const tickerFrame = () => {
+      const buffered = reasoningBufferRef.current.length
+      const displayed = displayedCharsRef.current
+      const gap = buffered - displayed
+      if (gap > 0) {
+        const step = Math.max(MIN_CHARS_PER_FRAME, gap * DRAIN_FRACTION)
+        const next = Math.min(buffered, displayed + step)
+        displayedCharsRef.current = next
+        const intNext = Math.floor(next)
+        const start = Math.max(0, intNext - TICKER_TAIL_CHARS)
+        const text = tickerTextRef.current
+        const scroller = tickerScrollRef.current
+        if (text) {
+          text.textContent = reasoningBufferRef.current.slice(start, intNext)
+        }
+        if (scroller) scroller.scrollLeft = scroller.scrollWidth
+      }
+      tickerRafRef.current = requestAnimationFrame(tickerFrame)
+    }
+    tickerRafRef.current = requestAnimationFrame(tickerFrame)
+
+    // RAF easing covers TTFB — the period before any tokens have arrived.
+    // Once the first content delta lands, we switch to chunk-driven progress
+    // and stop the RAF.
     const tick = (now: number) => {
       const eased = PROGRESS_CEILING * (1 - Math.exp(-(now - startedAt) / PROGRESS_TAU_MS))
       setProgress(eased)
@@ -102,7 +158,30 @@ export function GenerateScene({
     }
     rafRef.current = requestAnimationFrame(tick)
 
-    generateVoxelScene(img, modelIdRef.current, effortRef.current)
+    generateVoxelScene(img, modelIdRef.current, effortRef.current, schemeRef.current, {
+      onProgress: ({ chars, maxTokens }) => {
+        if (cancelled) return
+        if (!receivedFirstChunk) {
+          receivedFirstChunk = true
+          if (rafRef.current != null) {
+            cancelAnimationFrame(rafRef.current)
+            rafRef.current = null
+          }
+        }
+        // Rough chars-per-token ≈ 4. Clamp at the ceiling until parseToVoxels
+        // resolves, then we snap to 1.0 below.
+        const fraction = chars / (maxTokens * 4)
+        const value = Math.min(PROGRESS_CEILING, fraction)
+        setProgress(value)
+        pushProgress(value)
+      },
+      onReasoningDelta: (delta) => {
+        if (cancelled) return
+        // Append to the buffer; the RAF loop reveals it at a steady rate.
+        // Newlines are collapsed so the ticker stays single-line.
+        reasoningBufferRef.current += delta.replace(/\s+/g, ' ')
+      },
+    })
       .then(({ voxels, info }) => {
         if (cancelled) return
         setProgress(1)
@@ -129,6 +208,8 @@ export function GenerateScene({
       cancelled = true
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
       rafRef.current = null
+      if (tickerRafRef.current != null) cancelAnimationFrame(tickerRafRef.current)
+      tickerRafRef.current = null
     }
   }, [generating])
 
@@ -166,7 +247,7 @@ export function GenerateScene({
           Generate scene
         </h2>
         <p className="mt-4 max-w-xl text-center text-base font-semibold text-[#3d2f25] sm:text-lg">
-          Pick a model and how hard it should think.
+          Pick a model, a scheme, and how hard it should think.
         </p>
 
         <div className="mt-8 grid w-full gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -233,6 +314,41 @@ export function GenerateScene({
             </section>
 
             <section>
+              <h3 className="font-display text-2xl text-[#1f1814]">Scheme</h3>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {SCHEMES.map((s) => {
+                  const selected = s.id === scheme
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setScheme(s.id)}
+                      disabled={generating}
+                      className={[
+                        'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                        selected
+                          ? 'bg-[#dd6a4a] text-[#fff8ec] shadow-[0_2px_0_#b94f31] hover:-translate-y-0.5'
+                          : 'border border-[#1f1814]/10 bg-[#fffaf0] text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge)] hover:-translate-y-0.5',
+                        generating ? 'pointer-events-none opacity-60' : '',
+                      ].join(' ')}
+                    >
+                      {s.label}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                          selected
+                            ? 'bg-[#fff8ec]/25 text-[#fff8ec]'
+                            : 'bg-[#1f1814]/8 text-[#7a6755]'
+                        }`}
+                      >
+                        {s.hint}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+
+            <section>
               <h3 className="font-display text-2xl text-[#1f1814]">Effort</h3>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {EFFORTS.map((e) => {
@@ -285,11 +401,18 @@ export function GenerateScene({
                 )}
               </button>
 
-              <div className="mt-4 h-3 w-full overflow-hidden rounded-full border border-[#1f1814]/10 bg-[#fffaf0] shadow-[inset_0_2px_0_var(--color-paper-edge)]">
+              <div className="relative mt-4 h-7 w-full overflow-hidden rounded-full border border-[#1f1814]/10 bg-[#fffaf0] shadow-[inset_0_2px_0_var(--color-paper-edge)]">
                 <div
-                  className="h-full rounded-full bg-[#dd6a4a] transition-[width] duration-150 ease-out"
+                  className="absolute inset-y-0 left-0 rounded-full bg-[#dd6a4a]/40 transition-[width] duration-150 ease-out"
                   style={{ width: `${pct}%` }}
                 />
+                <div
+                  ref={tickerScrollRef}
+                  className="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-nowrap px-3 font-mono text-[11px] text-[#1f1814]/65"
+                  aria-hidden="true"
+                >
+                  <span ref={tickerTextRef} />
+                </div>
               </div>
 
               {error && (

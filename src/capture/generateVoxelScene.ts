@@ -1,4 +1,4 @@
-import { chat, ChatError, type ChatMessage } from '../lib/openrouter'
+import { chatStream, ChatError, type ChatMessage } from '../lib/openrouter'
 import {
   GRID_SIZE,
   PALETTE_ENTRIES,
@@ -6,116 +6,25 @@ import {
   type Voxel,
 } from '../scenes/voxelEditor/coords'
 import type { CapturedImage, EffortPreset } from './types'
+import { schemeById, type GenerateScheme } from './schemes'
+import { MAX_VOXELS } from './constants'
 
-const MAX_VOXELS = 2000
+export { MAX_VOXELS }
 
 const MAX_INDEX = GRID_SIZE - 1
 const MAX_COLOR = PALETTE_ENTRIES.length - 1
 
-const PALETTE_LINES = PALETTE_ENTRIES.map(
-  (e, i) => `${i.toString().padStart(2, ' ')}  ${e.name.padEnd(11, ' ')} — ${e.description}`,
-).join('\n')
-
-const SYSTEM_PROMPT = `You convert a single source image into a tiny 3D voxel scene that fits inside a ${GRID_SIZE}×${GRID_SIZE}×${GRID_SIZE} grid.
-
-# Coordinate system
-- Axes: X = right, Y = up, Z = forward (away from viewer).
-- Each axis runs from 0 to ${MAX_INDEX} (inclusive). Every cell MUST satisfy 0 ≤ x ≤ ${MAX_INDEX}, 0 ≤ y ≤ ${MAX_INDEX}, 0 ≤ z ≤ ${MAX_INDEX}.
-- y = 0 is the ground plane. Build on top of it; do not float objects unless they are intentionally airborne (clouds, birds, lamps, fruit on a branch).
-- Centre the composition roughly around x ≈ ${Math.floor(GRID_SIZE / 2)}, z ≈ ${Math.floor(GRID_SIZE / 2)} unless the scene demands otherwise.
-- The grid is small. Objects must be SIMPLIFIED. A whole tree might only fill 30–80 cells.
-
-# Planning (think before emitting)
-- Identify the distinct objects in the source. If it is a 2D drawing/sketch/icon/painting, INFER the 3D shape each element represents — a circle might be a sphere, a tree crown, the sun, a wheel.
-- Estimate each object's relative size and depth, then plan placements inside the ${GRID_SIZE}³ grid so objects DO NOT OCCUPY THE SAME CELLS. Use z to separate things that overlap in 2D. Leave breathing room — adjacent objects should not touch unless they physically connect (trunk meeting foliage, roof on a house).
-- Choose materials from the palette by INTENT, not by raw pixel colour. A tree trunk is "dark brown" + foliage "green" / "dark green". A sun is "yellow", not "amber". Pick the material that BEST describes what the cell IS.
-
-# Palette — choose \`c\` (material index) from this list
-\`c\` is a single byte (0–${MAX_COLOR}). Materials available:
-${PALETTE_LINES}
-
-# Geometry — one filled cell per tuple
-Group cells belonging to the same real-world object into one entry in \`objects\`. Each entry has a \`points\` array; each tuple in it is a flat \`[x, y, z, c]\`.
-Each object's \`points\` should be cohesive — all cells in one entry belong to the same thing.
-Empty cells are implicit — never emit a tuple for empty space.
-Later tuples overwrite earlier ones at the same (x, y, z), across objects too, so you can layer detail on top of a base.
-
-# Density guidance — adjust by the effort field in the user message
-- weak:   ~20–80 filled cells total. Minimal blocky silhouettes; one tuple per major feature.
-- medium: ~80–300 filled cells total. Recognisable shapes with light detail and shading.
-- strong: ~300–1000 filled cells total. Full shapes with surface texture and multi-tone shading.
-- Hard cap: never produce more than ${MAX_VOXELS} filled cells under any effort.
-
-# Output rules
-- Return STRICT JSON matching the provided schema. No prose outside the JSON.
-- Each cell is a flat 4-int tuple — NOT an object. Compact form is required.
-  Example: \`{"objects":[{"points":[[10,0,10,5],[10,1,10,5]]},{"points":[[18,18,2,3]]}]}\`
-- Prefer fewer, well-placed cells over noise — every cell should belong to something.`
-
-const VOXEL_SCHEMA = {
-  name: 'voxel_scene',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['objects'],
-    properties: {
-      objects: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['points'],
-          properties: {
-            // Flat 4-int tuples [x, y, z, c] — the object form is ~3× the
-            // tokens and blows past Haiku's output budget on medium+ efforts.
-            // No `minItems`/`maxItems` — Bedrock rejects array length
-            // constraints; tuple length and value ranges are enforced
-            // client-side in `toVoxels`.
-            points: {
-              type: 'array',
-              items: { type: 'array', items: { type: 'integer' } },
-            },
-          },
-        },
-      },
-    },
-  },
-} as const
-
 type RawTuple = number[]
-
-interface RawObject {
-  points?: RawTuple[]
-}
-
-interface RawScene {
-  objects?: RawObject[]
-}
-
-function maxTokensForEffort(effort: EffortPreset): number {
-  if (effort === 'strong') return 19000
-  if (effort === 'medium') return 8200
-  return 4000
-}
 
 function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n)
-}
-
-function parseScene(raw: string): RawScene {
-  try {
-    return JSON.parse(raw) as RawScene
-  } catch {
-    throw new ChatError(200, raw, 'Model returned non-JSON content')
-  }
 }
 
 function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n
 }
 
-function writeCell(
+export function writeCell(
   byKey: Map<string, Voxel>,
   x: number,
   y: number,
@@ -127,9 +36,10 @@ function writeCell(
   return byKey.size >= MAX_VOXELS
 }
 
-// Primitive expansion helpers — currently UNUSED by toVoxels (the model emits
-// only points). Kept for future programmatic callers that may want to build
-// scenes from cuboids/spheres directly without a model round-trip.
+// Primitive expansion helpers — currently unused by the points scheme (the
+// model emits only individual cells). The Code scheme re-implements the same
+// math inside the worker. Kept here for any future host-side caller that wants
+// to build scenes from cuboids/spheres directly without a model round-trip.
 //
 // Each helper returns `true` if MAX_VOXELS has been reached and the caller
 // should stop emitting further primitives.
@@ -190,32 +100,6 @@ export function expandSphere(byKey: Map<string, Voxel>, t: RawTuple): boolean {
   return false
 }
 
-function toVoxels(scene: RawScene): Voxel[] {
-  const byKey = new Map<string, Voxel>()
-
-  if (Array.isArray(scene.objects)) {
-    outer: for (const obj of scene.objects) {
-      if (!obj || !Array.isArray(obj.points)) continue
-      for (const t of obj.points) {
-        if (!Array.isArray(t) || t.length < 4) continue
-        const [x, y, z, c] = t
-        if (!isInt(x) || !isInt(y) || !isInt(z) || !isInt(c)) continue
-        if (x < 0 || x > MAX_INDEX) continue
-        if (y < 0 || y > MAX_INDEX) continue
-        if (z < 0 || z > MAX_INDEX) continue
-        if (c < 0 || c > MAX_COLOR) continue
-        if (writeCell(byKey, x, y, z, c)) break outer
-      }
-    }
-  }
-
-  if (byKey.size === 0) {
-    throw new ChatError(200, scene, 'Model produced no valid voxels')
-  }
-
-  return Array.from(byKey.values())
-}
-
 // Vision models top out around ~1024px useful resolution; phone cameras shoot
 // 12MP. Sending the raw base64 blows past Netlify Function payload limits
 // (~6 MB) and wastes upstream tokens. Downsize before the request.
@@ -245,13 +129,27 @@ async function downsizeImage(image: CapturedImage): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.85)
 }
 
+function maxTokensFor(effort: EffortPreset, _scheme: GenerateScheme): number {
+  if (effort === 'strong') return 8000
+  if (effort === 'medium') return 5000
+  return 3000
+}
+
+function reasoningEffortFor(effort: EffortPreset): 'low' | 'medium' | 'high' {
+  if (effort === 'strong') return 'high'
+  if (effort === 'medium') return 'medium'
+  return 'low'
+}
+
 export interface GenerationInfo {
   model: string
   effort: EffortPreset
+  scheme: GenerateScheme
   promptTokens: number
   completionTokens: number
   totalTokens: number
   cost?: number
+  durationMs: number
 }
 
 export interface GenerationResult {
@@ -259,15 +157,34 @@ export interface GenerationResult {
   info: GenerationInfo | null
 }
 
+export interface GenerationProgress {
+  // Accumulated characters of buffered content. Convert to a 0..1 fraction in
+  // the UI using `maxTokens` (rough chars-per-token = 4).
+  chars: number
+  // The cap that was requested for this call — lets the UI compute a stable
+  // denominator without re-deriving it from effort+scheme.
+  maxTokens: number
+}
+
+export interface GenerateOptions {
+  onProgress?: (progress: GenerationProgress) => void
+  onReasoningDelta?: (delta: string) => void
+}
+
 export async function generateVoxelScene(
   image: CapturedImage,
   modelId: string,
   effort: EffortPreset,
+  scheme: GenerateScheme,
+  opts: GenerateOptions = {},
 ): Promise<GenerationResult> {
+  const startedAt = performance.now()
   const dataUrl = await downsizeImage(image)
+  const descriptor = schemeById(scheme)
+  const maxTokens = maxTokensFor(effort, scheme)
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: descriptor.systemPrompt },
     {
       role: 'user',
       content: [
@@ -283,56 +200,55 @@ export async function generateVoxelScene(
     },
   ]
 
-  const res = await chat({
-    model: modelId,
-    messages,
-    response_format: { type: 'json_schema', json_schema: VOXEL_SCHEMA },
-    temperature: 0.4,
-    max_tokens: maxTokensForEffort(effort),
-    usage: { include: true },
-  })
+  const { content, usage, finishReason } = await chatStream(
+    {
+      model: modelId,
+      messages,
+      response_format: { type: 'json_schema', json_schema: descriptor.jsonSchema },
+      temperature: 0.4,
+      max_tokens: maxTokens,
+      reasoning: { effort: reasoningEffortFor(effort) },
+    },
+    {
+      onContentDelta: (_, totalChars) => {
+        opts.onProgress?.({ chars: totalChars, maxTokens })
+      },
+      onReasoningDelta: (delta) => {
+        opts.onReasoningDelta?.(delta)
+      },
+    },
+  )
 
   let info: GenerationInfo | null = null
-  if (res.usage) {
-    const { prompt_tokens, completion_tokens, total_tokens, cost } = res.usage
+  if (usage) {
+    const { prompt_tokens, completion_tokens, total_tokens, cost } = usage
     info = {
       model: modelId,
       effort,
+      scheme,
       promptTokens: prompt_tokens,
       completionTokens: completion_tokens,
       totalTokens: total_tokens,
       cost: typeof cost === 'number' ? cost : undefined,
+      durationMs: Math.round(performance.now() - startedAt),
     }
     const costStr =
       typeof cost === 'number' ? `$${cost.toFixed(6)}` : 'n/a'
     console.log(
-      `[generateVoxelScene] ${modelId} (${effort}) — tokens: ${prompt_tokens} in / ${completion_tokens} out / ${total_tokens} total · cost: ${costStr}`,
+      `[generateVoxelScene] ${modelId} (${effort}, ${scheme}) — tokens: ${prompt_tokens} in / ${completion_tokens} out / ${total_tokens} total · cost: ${costStr} · duration: ${(info.durationMs / 1000).toFixed(2)}s`,
     )
   }
 
-  // OpenRouter sometimes returns 200 with an error body (no `choices`) — e.g.
-  // upstream provider failure or content moderation. Surface that message
-  // instead of crashing on the array access.
-  const errBody = (res as unknown as { error?: { message?: string } | string }).error
-  if (errBody) {
-    const msg =
-      typeof errBody === 'string'
-        ? errBody
-        : errBody.message ?? 'Upstream returned an error'
-    throw new ChatError(200, res, msg)
-  }
-
-  const content = res.choices?.[0]?.message?.content
   if (typeof content !== 'string' || content.length === 0) {
-    const finish = res.choices?.[0]?.finish_reason
     throw new ChatError(
       200,
-      res,
-      finish === 'length'
+      { finishReason },
+      finishReason === 'length'
         ? 'Model hit the token limit before finishing — try a smaller effort'
         : 'Model returned empty content',
     )
   }
 
-  return { voxels: toVoxels(parseScene(content)), info }
+  const voxels = await descriptor.parseToVoxels(content, effort)
+  return { voxels, info }
 }
