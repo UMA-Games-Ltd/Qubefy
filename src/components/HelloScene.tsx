@@ -1,63 +1,119 @@
-import { useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
-import type { Group } from 'three'
+import * as THREE from 'three'
 
-const VOXEL_SIZE = 0.95
-
-const voxels: { position: [number, number, number]; color: string }[] = [
-  { position: [0, 0, 0], color: '#a78bfa' },
-  { position: [1, 0, 0], color: '#8b5cf6' },
-  { position: [-1, 0, 0], color: '#c4b5fd' },
-  { position: [0, 1, 0], color: '#7c3aed' },
-  { position: [0, 0, 1], color: '#ec4899' },
-  { position: [0, 0, -1], color: '#f472b6' },
-  { position: [1, 1, 0], color: '#22d3ee' },
-  { position: [-1, 0, 1], color: '#38bdf8' },
-  { position: [1, 0, -1], color: '#60a5fa' },
+const PALETTE = [
+  '#dd6a4a',
+  '#f3c44a',
+  '#7aa84a',
+  '#4d8fd6',
+  '#e58aa3',
+  '#b03a4a',
+  '#fffaf0',
 ]
+const COUNT = 110
+const X_SPREAD = 16
+const Z_SPREAD = 6
+const Y_TOP = 9
+const Y_BOTTOM = -9
 
-function VoxelCluster() {
-  const groupRef = useRef<Group>(null)
+interface RainCube {
+  x: number
+  z: number
+  y: number
+  size: number
+  speed: number
+  rx: number
+  ry: number
+  rz: number
+  rxSpeed: number
+  rySpeed: number
+  color: THREE.Color
+}
+
+function spawn(initial: boolean): RainCube {
+  return {
+    x: (Math.random() - 0.5) * X_SPREAD * 2,
+    z: (Math.random() - 0.5) * Z_SPREAD * 2,
+    y: initial
+      ? Math.random() * (Y_TOP - Y_BOTTOM) + Y_BOTTOM
+      : Y_TOP + Math.random() * 4,
+    size: 0.14 + Math.random() * 0.22,
+    speed: 0.6 + Math.random() * 1.2,
+    rx: Math.random() * Math.PI * 2,
+    ry: Math.random() * Math.PI * 2,
+    rz: Math.random() * Math.PI * 2,
+    rxSpeed: (Math.random() - 0.5) * 0.8,
+    rySpeed: (Math.random() - 0.5) * 0.8,
+    color: new THREE.Color(PALETTE[Math.floor(Math.random() * PALETTE.length)]),
+  }
+}
+
+function VoxelRain() {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+  const cubes = useMemo<RainCube[]>(
+    () => Array.from({ length: COUNT }, () => spawn(true)),
+    [],
+  )
+
+  useEffect(() => {
+    const mesh = meshRef.current
+    if (!mesh) return
+    for (let i = 0; i < cubes.length; i++) {
+      mesh.setColorAt(i, cubes[i].color)
+    }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  }, [cubes])
 
   useFrame((_, delta) => {
-    if (!groupRef.current) return
-    groupRef.current.rotation.y += delta * 0.35
-    groupRef.current.rotation.x += delta * 0.08
+    const mesh = meshRef.current
+    if (!mesh) return
+    const dt = Math.min(delta, 0.05)
+    for (let i = 0; i < cubes.length; i++) {
+      const c = cubes[i]
+      c.y -= c.speed * dt
+      c.rx += c.rxSpeed * dt
+      c.ry += c.rySpeed * dt
+      if (c.y < Y_BOTTOM) {
+        Object.assign(c, spawn(false))
+        mesh.setColorAt(i, c.color)
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+      }
+      dummy.position.set(c.x, c.y, c.z)
+      dummy.rotation.set(c.rx, c.ry, c.rz)
+      dummy.scale.setScalar(c.size)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
   })
 
   return (
-    <group ref={groupRef}>
-      {voxels.map((v, i) => (
-        <mesh key={i} position={v.position} castShadow receiveShadow>
-          <boxGeometry args={[VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE]} />
-          <meshStandardMaterial
-            color={v.color}
-            roughness={0.4}
-            metalness={0.1}
-          />
-        </mesh>
-      ))}
-    </group>
+    <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]}>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshStandardMaterial roughness={0.55} metalness={0.05} />
+    </instancedMesh>
   )
 }
 
-export function HelloScene() {
+interface HelloSceneProps {
+  active?: boolean
+}
+
+export function HelloScene({ active = true }: HelloSceneProps = {}) {
   return (
     <Canvas
-      camera={{ position: [4, 3.2, 5], fov: 42 }}
+      camera={{ position: [0, 0, 14], fov: 55 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
+      frameloop={active ? 'always' : 'demand'}
+      style={{ pointerEvents: 'none' }}
     >
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
-      <directionalLight position={[-4, -2, -3]} intensity={0.3} color="#7c3aed" />
-      <VoxelCluster />
-      <OrbitControls
-        enablePan={false}
-        enableZoom={false}
-        autoRotate={false}
-      />
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[6, 10, 8]} intensity={1.0} color="#ffd9a4" />
+      <directionalLight position={[-6, -4, -2]} intensity={0.35} color="#dd6a4a" />
+      <VoxelRain />
     </Canvas>
   )
 }
