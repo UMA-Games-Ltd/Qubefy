@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { BackButton } from '../../components/editor/BackButton'
 import { BasePlaneToggle } from '../../components/editor/BasePlaneToggle'
-import { ColorBar } from '../../components/editor/ColorBar'
+import { ColorPicker } from '../../components/editor/ColorPicker'
 import { GenerationInfoPanel } from '../../components/editor/GenerationInfoPanel'
 import { ShareButton } from '../../components/editor/ShareButton'
 import { Toolbar } from '../../components/editor/Toolbar'
@@ -139,7 +139,7 @@ export function VoxelEditorScene({
         onToggle={() => setShowBasePlane((v) => !v)}
       />
       <ShareButton onShare={() => encodeScene(state.voxels)} />
-      <ColorBar
+      <ColorPicker
         palette={PALETTE}
         active={state.color}
         onPick={(color) => {

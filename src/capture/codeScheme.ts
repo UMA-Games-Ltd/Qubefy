@@ -1,14 +1,13 @@
-import { ChatError } from '../../lib/openrouter'
+import { ChatError, type JsonSchemaResponseFormat } from '../lib/openrouter'
 import {
   GRID_SIZE,
   PALETTE_ENTRIES,
   cellKey,
   type Voxel,
-} from '../../scenes/voxelEditor/coords'
-import { MAX_VOXELS } from '../constants'
-import VoxelWorker from '../voxelWorker.ts?worker'
-import type { VoxelWorkerIn, VoxelWorkerOut } from '../voxelWorker'
-import type { SchemeDescriptor } from './types'
+} from '../scenes/voxelEditor/coords'
+import { MAX_VOXELS } from './constants'
+import VoxelWorker from './voxelWorker.ts?worker'
+import type { VoxelWorkerIn, VoxelWorkerOut } from './voxelWorker'
 
 const MAX_INDEX = GRID_SIZE - 1
 const MAX_COLOR = PALETTE_ENTRIES.length - 1
@@ -18,7 +17,7 @@ const PALETTE_LINES = PALETTE_ENTRIES.map(
   (e, i) => `${i.toString().padStart(2, ' ')}  ${e.name.padEnd(11, ' ')} — ${e.description}`,
 ).join('\n')
 
-const SYSTEM_PROMPT = `You convert a single source image into a tiny 3D voxel scene that fits inside a ${GRID_SIZE}×${GRID_SIZE}×${GRID_SIZE} grid. You produce the scene by writing a short JavaScript snippet that calls a tiny API; we execute the snippet in a sandbox and collect the cells it writes.
+export const CODE_SYSTEM_PROMPT = `You convert a single source image into a tiny 3D voxel scene that fits inside a ${GRID_SIZE}×${GRID_SIZE}×${GRID_SIZE} grid. You produce the scene by writing a short JavaScript snippet that calls a tiny API; we execute the snippet in a sandbox and collect the cells it writes.
 
 # Coordinate system
 - Axes: X = right, Y = up, Z = forward (away from viewer).
@@ -53,10 +52,10 @@ You can use loops, helper functions, and procedural logic — that is the entire
 - Use \`Math.sin\` / \`Math.cos\` / modulo for terrain height-maps, checkered floors, ripples, stripes.
 - Define a \`function tree(x, z) { ... }\` and call it three times instead of repeating geometry.
 
-# Density guidance — adjust by the effort field in the user message
-- weak:   your code should produce ~20–80 filled cells. Minimal blocky silhouettes.
+# Density guidance — adjust by the complexity field in the user message
+- low:    your code should produce ~20–80 filled cells. Minimal blocky silhouettes.
 - medium: ~80–300 filled cells. Recognisable shapes with light detail and shading.
-- strong: ~300–1000 filled cells. Full shapes with surface texture and multi-tone shading.
+- high:   ~300–1000 filled cells. Full shapes with surface texture and multi-tone shading.
 - Hard cap: never exceed ${MAX_VOXELS} cells — the runtime stops accepting writes past that.
 
 # Output rules
@@ -65,7 +64,7 @@ You can use loops, helper functions, and procedural logic — that is the entire
 - Example: \`{"description":"checkered floor with a single red post","code":"for(let x=0;x<20;x++)for(let z=0;z<20;z++)setVoxel(x,0,z,(x+z)%2?5:6);setBox(10,1,10,1,4,1,7);"}\`
 - Prefer compact, expressive code over thousands of literal \`setVoxel\` calls.`
 
-const CODE_SCHEMA = {
+export const CODE_JSON_SCHEMA: JsonSchemaResponseFormat['json_schema'] = {
   name: 'voxel_code_scene',
   strict: true,
   schema: {
@@ -85,7 +84,7 @@ const CODE_SCHEMA = {
       },
     },
   },
-} as const
+}
 
 interface RawCodeScene {
   description?: string
@@ -171,19 +170,12 @@ function tuplesToVoxels(tuples: Array<[number, number, number, number]>): Voxel[
   return Array.from(byKey.values())
 }
 
-export const codeScheme: SchemeDescriptor = {
-  id: 'code',
-  label: 'Code',
-  hint: 'JS snippet',
-  systemPrompt: SYSTEM_PROMPT,
-  jsonSchema: CODE_SCHEMA,
-  async parseToVoxels(content) {
-    const scene = parseScene(content)
-    const code = typeof scene.code === 'string' ? scene.code : ''
-    if (code.length === 0) {
-      throw new ChatError(200, scene, 'Model returned no code')
-    }
-    const tuples = await runInWorker(code)
-    return tuplesToVoxels(tuples)
-  },
+export async function parseCodeSceneToVoxels(content: string): Promise<Voxel[]> {
+  const scene = parseScene(content)
+  const code = typeof scene.code === 'string' ? scene.code : ''
+  if (code.length === 0) {
+    throw new ChatError(200, scene, 'Model returned no code')
+  }
+  const tuples = await runInWorker(code)
+  return tuplesToVoxels(tuples)
 }

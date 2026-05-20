@@ -4,4 +4,4 @@ export interface CapturedImage {
   height: number
 }
 
-export type EffortPreset = 'weak' | 'medium' | 'strong'
+export type ComplexityPreset = 'low' | 'medium' | 'high'

@@ -101,9 +101,6 @@ function App() {
                       Qubefy
                     </span>
                   </div>
-                  <span className="rounded-full border border-[#1f1814]/10 bg-[#fffaf0] px-3 py-1 text-xs font-bold text-[#7a6755] shadow-[0_2px_0_var(--color-paper-edge)]">
-                    Dev preview · v0.0.0
-                  </span>
                 </header>
 
                 <section className="pointer-events-none flex max-w-3xl flex-col items-center text-center">
@@ -132,7 +129,15 @@ function App() {
                 </section>
 
                 <footer className="font-hand text-base text-[#7a6755]">
-                  built with vite · react · tailwind · three.js
+                  made{' '}
+                  <a
+                    href="https://uma.games"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline hover:text-[#1f1814]"
+                  >
+                    uma.games
+                  </a>
                 </footer>
               </main>
 

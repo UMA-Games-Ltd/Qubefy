@@ -5,8 +5,12 @@ import {
   cellKey,
   type Voxel,
 } from '../scenes/voxelEditor/coords'
-import type { CapturedImage, EffortPreset } from './types'
-import { schemeById, type GenerateScheme } from './schemes'
+import type { CapturedImage, ComplexityPreset } from './types'
+import {
+  CODE_SYSTEM_PROMPT,
+  CODE_JSON_SCHEMA,
+  parseCodeSceneToVoxels,
+} from './codeScheme'
 import { MAX_VOXELS } from './constants'
 
 export { MAX_VOXELS }
@@ -36,9 +40,7 @@ export function writeCell(
   return byKey.size >= MAX_VOXELS
 }
 
-// Primitive expansion helpers — currently unused by the points scheme (the
-// model emits only individual cells). The Code scheme re-implements the same
-// math inside the worker. Kept here for any future host-side caller that wants
+// Primitive expansion helpers — kept for any future host-side caller that wants
 // to build scenes from cuboids/spheres directly without a model round-trip.
 //
 // Each helper returns `true` if MAX_VOXELS has been reached and the caller
@@ -129,22 +131,15 @@ async function downsizeImage(image: CapturedImage): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.85)
 }
 
-function maxTokensFor(effort: EffortPreset, _scheme: GenerateScheme): number {
-  if (effort === 'strong') return 8000
-  if (effort === 'medium') return 5000
+function maxTokensFor(complexity: ComplexityPreset): number {
+  if (complexity === 'high') return 8000
+  if (complexity === 'medium') return 5000
   return 3000
-}
-
-function reasoningEffortFor(effort: EffortPreset): 'low' | 'medium' | 'high' {
-  if (effort === 'strong') return 'high'
-  if (effort === 'medium') return 'medium'
-  return 'low'
 }
 
 export interface GenerationInfo {
   model: string
-  effort: EffortPreset
-  scheme: GenerateScheme
+  complexity: ComplexityPreset
   promptTokens: number
   completionTokens: number
   totalTokens: number
@@ -162,7 +157,7 @@ export interface GenerationProgress {
   // the UI using `maxTokens` (rough chars-per-token = 4).
   chars: number
   // The cap that was requested for this call — lets the UI compute a stable
-  // denominator without re-deriving it from effort+scheme.
+  // denominator without re-deriving it from complexity.
   maxTokens: number
 }
 
@@ -174,23 +169,21 @@ export interface GenerateOptions {
 export async function generateVoxelScene(
   image: CapturedImage,
   modelId: string,
-  effort: EffortPreset,
-  scheme: GenerateScheme,
+  complexity: ComplexityPreset,
   opts: GenerateOptions = {},
 ): Promise<GenerationResult> {
   const startedAt = performance.now()
   const dataUrl = await downsizeImage(image)
-  const descriptor = schemeById(scheme)
-  const maxTokens = maxTokensFor(effort, scheme)
+  const maxTokens = maxTokensFor(complexity)
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: descriptor.systemPrompt },
+    { role: 'system', content: CODE_SYSTEM_PROMPT },
     {
       role: 'user',
       content: [
         {
           type: 'text',
-          text: `Effort: ${effort}. Generate a voxel scene from this image.`,
+          text: `Complexity: ${complexity}. Generate a voxel scene from this image.`,
         },
         {
           type: 'image_url',
@@ -204,10 +197,9 @@ export async function generateVoxelScene(
     {
       model: modelId,
       messages,
-      response_format: { type: 'json_schema', json_schema: descriptor.jsonSchema },
+      response_format: { type: 'json_schema', json_schema: CODE_JSON_SCHEMA },
       temperature: 0.4,
       max_tokens: maxTokens,
-      reasoning: { effort: reasoningEffortFor(effort) },
     },
     {
       onContentDelta: (_, totalChars) => {
@@ -224,8 +216,7 @@ export async function generateVoxelScene(
     const { prompt_tokens, completion_tokens, total_tokens, cost } = usage
     info = {
       model: modelId,
-      effort,
-      scheme,
+      complexity,
       promptTokens: prompt_tokens,
       completionTokens: completion_tokens,
       totalTokens: total_tokens,
@@ -235,7 +226,7 @@ export async function generateVoxelScene(
     const costStr =
       typeof cost === 'number' ? `$${cost.toFixed(6)}` : 'n/a'
     console.log(
-      `[generateVoxelScene] ${modelId} (${effort}, ${scheme}) — tokens: ${prompt_tokens} in / ${completion_tokens} out / ${total_tokens} total · cost: ${costStr} · duration: ${(info.durationMs / 1000).toFixed(2)}s`,
+      `[generateVoxelScene] ${modelId} (${complexity}) — tokens: ${prompt_tokens} in / ${completion_tokens} out / ${total_tokens} total · cost: ${costStr} · duration: ${(info.durationMs / 1000).toFixed(2)}s`,
     )
   }
 
@@ -244,11 +235,11 @@ export async function generateVoxelScene(
       200,
       { finishReason },
       finishReason === 'length'
-        ? 'Model hit the token limit before finishing — try a smaller effort'
+        ? 'Model hit the token limit before finishing — try a smaller complexity'
         : 'Model returned empty content',
     )
   }
 
-  const voxels = await descriptor.parseToVoxels(content, effort)
+  const voxels = await parseCodeSceneToVoxels(content)
   return { voxels, info }
 }

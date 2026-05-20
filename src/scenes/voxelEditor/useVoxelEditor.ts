@@ -34,7 +34,7 @@ function makeInitialState(initialVoxels?: Voxel[]): State {
   return {
     voxels,
     history: [],
-    color: PALETTE[2],
+    color: PALETTE[17],
     tool: 'add',
   }
 }

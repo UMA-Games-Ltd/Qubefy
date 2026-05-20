@@ -70,7 +70,7 @@ Both Canvases stay mounted; the inactive one switches to
 - `coords.ts` — grid constants, palette, `cellKey`, `inBounds`,
   `cellToWorld`, `worldToCell`.
 
-Overlay UI lives in `src/components/editor/` (`ColorBar`, `Toolbar`,
+Overlay UI lives in `src/components/editor/` (`ColorPicker`, `Toolbar`,
 `BackButton`) — plain DOM, positioned absolutely outside the Canvas for
 cleaner pointer handling than `<Html>`.
 

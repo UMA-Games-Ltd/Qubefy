@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BackButton } from '../components/editor/BackButton'
 import { GENERATE_MODELS } from './models'
 import { generateVoxelScene, type GenerationInfo } from './generateVoxelScene'
-import { SCHEMES, type GenerateScheme } from './schemes'
-import type { CapturedImage, EffortPreset } from './types'
+import type { CapturedImage, ComplexityPreset } from './types'
 import type { Voxel } from '../scenes/voxelEditor/coords'
 
 export interface GenerationStatus {
@@ -20,10 +19,10 @@ interface Props {
   onStatusChange?: (status: GenerationStatus) => void
 }
 
-const EFFORTS: { id: EffortPreset; label: string; hint: string }[] = [
-  { id: 'weak', label: 'Weak', hint: 'rough sketch' },
+const COMPLEXITIES: { id: ComplexityPreset; label: string; hint: string }[] = [
+  { id: 'low', label: 'Low', hint: 'rough sketch' },
   { id: 'medium', label: 'Medium', hint: 'balanced' },
-  { id: 'strong', label: 'Strong', hint: 'detailed' },
+  { id: 'high', label: 'High', hint: 'detailed' },
 ]
 
 // Visual progress creeps toward this ceiling while the request is in flight,
@@ -31,7 +30,7 @@ const EFFORTS: { id: EffortPreset; label: string; hint: string }[] = [
 // done before the network is.
 const PROGRESS_CEILING = 0.9
 // Time constant for the asymptotic creep (ms). Tuned so the bar reaches the
-// ceiling smoothly within ~20s — long enough for a strong-effort call.
+// ceiling smoothly within ~20s — long enough for a high-complexity call.
 const PROGRESS_TAU_MS = 6000
 
 export function GenerateScene({
@@ -42,8 +41,7 @@ export function GenerateScene({
   onStatusChange,
 }: Props) {
   const [modelId, setModelId] = useState<string>('google/gemini-3.5-flash')
-  const [scheme, setScheme] = useState<GenerateScheme>('code')
-  const [effort, setEffort] = useState<EffortPreset>('medium')
+  const [complexity, setComplexity] = useState<ComplexityPreset>('medium')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -65,14 +63,12 @@ export function GenerateScene({
   // browser's resource budget with multi-MB image payloads.
   const imageRef = useRef(image)
   const modelIdRef = useRef(modelId)
-  const schemeRef = useRef(scheme)
-  const effortRef = useRef(effort)
+  const complexityRef = useRef(complexity)
   const onCompleteRef = useRef(onComplete)
   const onStatusChangeRef = useRef(onStatusChange)
   imageRef.current = image
   modelIdRef.current = modelId
-  schemeRef.current = scheme
-  effortRef.current = effort
+  complexityRef.current = complexity
   onCompleteRef.current = onComplete
   onStatusChangeRef.current = onStatusChange
 
@@ -158,7 +154,7 @@ export function GenerateScene({
     }
     rafRef.current = requestAnimationFrame(tick)
 
-    generateVoxelScene(img, modelIdRef.current, effortRef.current, schemeRef.current, {
+    generateVoxelScene(img, modelIdRef.current, complexityRef.current, {
       onProgress: ({ chars, maxTokens }) => {
         if (cancelled) return
         if (!receivedFirstChunk) {
@@ -247,7 +243,7 @@ export function GenerateScene({
           Generate scene
         </h2>
         <p className="mt-4 max-w-xl text-center text-base font-semibold text-[#3d2f25] sm:text-lg">
-          Pick a model, a scheme, and how hard it should think.
+          Pick a model and how detailed it should be.
         </p>
 
         <div className="mt-8 grid w-full gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -314,50 +310,15 @@ export function GenerateScene({
             </section>
 
             <section>
-              <h3 className="font-display text-2xl text-[#1f1814]">Scheme</h3>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {SCHEMES.map((s) => {
-                  const selected = s.id === scheme
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => setScheme(s.id)}
-                      disabled={generating}
-                      className={[
-                        'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
-                        selected
-                          ? 'bg-[#dd6a4a] text-[#fff8ec] shadow-[0_2px_0_#b94f31] hover:-translate-y-0.5'
-                          : 'border border-[#1f1814]/10 bg-[#fffaf0] text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge)] hover:-translate-y-0.5',
-                        generating ? 'pointer-events-none opacity-60' : '',
-                      ].join(' ')}
-                    >
-                      {s.label}
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                          selected
-                            ? 'bg-[#fff8ec]/25 text-[#fff8ec]'
-                            : 'bg-[#1f1814]/8 text-[#7a6755]'
-                        }`}
-                      >
-                        {s.hint}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-
-            <section>
-              <h3 className="font-display text-2xl text-[#1f1814]">Effort</h3>
+              <h3 className="font-display text-2xl text-[#1f1814]">Complexity</h3>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                {EFFORTS.map((e) => {
-                  const selected = e.id === effort
+                {COMPLEXITIES.map((e) => {
+                  const selected = e.id === complexity
                   return (
                     <button
                       key={e.id}
                       type="button"
-                      onClick={() => setEffort(e.id)}
+                      onClick={() => setComplexity(e.id)}
                       disabled={generating}
                       className={[
                         'flex flex-col items-center gap-0.5 rounded-2xl px-3 py-3 transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
