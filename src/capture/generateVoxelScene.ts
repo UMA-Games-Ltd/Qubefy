@@ -1,10 +1,5 @@
 import { chatStream, ChatError, type ChatMessage } from '../lib/openrouter'
-import {
-  GRID_SIZE,
-  PALETTE_ENTRIES,
-  cellKey,
-  type Voxel,
-} from '../scenes/voxelEditor/coords'
+import type { GridSize, Voxel } from '../scenes/voxelEditor/coords'
 import type { CapturedImage, ComplexityPreset } from './types'
 import {
   CODE_SYSTEM_PROMPT,
@@ -14,93 +9,6 @@ import {
 import { MAX_VOXELS } from './constants'
 
 export { MAX_VOXELS }
-
-const MAX_INDEX = GRID_SIZE - 1
-const MAX_COLOR = PALETTE_ENTRIES.length - 1
-
-type RawTuple = number[]
-
-function isInt(n: unknown): n is number {
-  return typeof n === 'number' && Number.isInteger(n)
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return n < lo ? lo : n > hi ? hi : n
-}
-
-export function writeCell(
-  byKey: Map<string, Voxel>,
-  x: number,
-  y: number,
-  z: number,
-  c: number,
-): boolean {
-  const voxel: Voxel = { x, y, z, color: PALETTE_ENTRIES[c].hex }
-  byKey.set(cellKey(voxel), voxel)
-  return byKey.size >= MAX_VOXELS
-}
-
-// Primitive expansion helpers — kept for any future host-side caller that wants
-// to build scenes from cuboids/spheres directly without a model round-trip.
-//
-// Each helper returns `true` if MAX_VOXELS has been reached and the caller
-// should stop emitting further primitives.
-
-/** Fill an axis-aligned box `[x, y, z, sx, sy, sz, c]` (min corner + full sizes). */
-export function expandCuboid(byKey: Map<string, Voxel>, t: RawTuple): boolean {
-  if (!Array.isArray(t) || t.length < 7) return false
-  const [x, y, z, sx, sy, sz, c] = t
-  if (!isInt(x) || !isInt(y) || !isInt(z)) return false
-  if (!isInt(sx) || !isInt(sy) || !isInt(sz)) return false
-  if (!isInt(c) || c < 0 || c > MAX_COLOR) return false
-  if (sx < 1 || sy < 1 || sz < 1) return false
-
-  const x0 = clamp(x, 0, MAX_INDEX)
-  const y0 = clamp(y, 0, MAX_INDEX)
-  const z0 = clamp(z, 0, MAX_INDEX)
-  const x1 = clamp(x + sx - 1, 0, MAX_INDEX)
-  const y1 = clamp(y + sy - 1, 0, MAX_INDEX)
-  const z1 = clamp(z + sz - 1, 0, MAX_INDEX)
-
-  for (let cz = z0; cz <= z1; cz++) {
-    for (let cy = y0; cy <= y1; cy++) {
-      for (let cx = x0; cx <= x1; cx++) {
-        if (writeCell(byKey, cx, cy, cz, c)) return true
-      }
-    }
-  }
-  return false
-}
-
-/**
- * Fill a sphere `[x, y, z, r, c]` (center cell + radius). The `+ r` fattens
- * the test radius slightly so small spheres (r = 1–3) read as round rather
- * than diamond-shaped — a standard voxel-art trick.
- */
-export function expandSphere(byKey: Map<string, Voxel>, t: RawTuple): boolean {
-  if (!Array.isArray(t) || t.length < 5) return false
-  const [x, y, z, r, c] = t
-  if (!isInt(x) || !isInt(y) || !isInt(z) || !isInt(r) || !isInt(c)) return false
-  if (c < 0 || c > MAX_COLOR) return false
-  if (r < 1) return false
-
-  const rSq = r * r + r
-  for (let dz = -r; dz <= r; dz++) {
-    const cz = z + dz
-    if (cz < 0 || cz > MAX_INDEX) continue
-    for (let dy = -r; dy <= r; dy++) {
-      const cy = y + dy
-      if (cy < 0 || cy > MAX_INDEX) continue
-      for (let dx = -r; dx <= r; dx++) {
-        const cx = x + dx
-        if (cx < 0 || cx > MAX_INDEX) continue
-        if (dx * dx + dy * dy + dz * dz > rSq) continue
-        if (writeCell(byKey, cx, cy, cz, c)) return true
-      }
-    }
-  }
-  return false
-}
 
 // Vision models top out around ~1024px useful resolution; phone cameras shoot
 // 12MP. Sending the raw base64 blows past Netlify Function payload limits
@@ -149,6 +57,7 @@ export interface GenerationInfo {
 
 export interface GenerationResult {
   voxels: Voxel[]
+  size: GridSize
   info: GenerationInfo | null
 }
 
@@ -200,6 +109,7 @@ export async function generateVoxelScene(
       response_format: { type: 'json_schema', json_schema: CODE_JSON_SCHEMA },
       temperature: 0.4,
       max_tokens: maxTokens,
+      reasoning: { effort: complexity },
     },
     {
       onContentDelta: (_, totalChars) => {
@@ -248,6 +158,6 @@ export async function generateVoxelScene(
     )
   }
 
-  const voxels = await parseCodeSceneToVoxels(content)
-  return { voxels, info }
+  const { voxels, size } = await parseCodeSceneToVoxels(content)
+  return { voxels, size, info }
 }

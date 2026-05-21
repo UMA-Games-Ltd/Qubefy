@@ -1,23 +1,34 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { GRID_SIZE, inBounds, worldToCell, type Cell } from './coords'
+import {
+  inBounds,
+  worldToCell,
+  type Cell,
+  type GridSize,
+} from './coords'
 
 interface Props {
   onAdd: (cell: Cell) => void
   enabled: boolean
+  size: GridSize
+  isOccupied: (cell: Cell) => boolean
 }
 
-export function BasePlane({ onAdd, enabled }: Props) {
+export function BasePlane({ onAdd, enabled, size, isOccupied }: Props) {
   const linesRef = useRef<THREE.LineSegments>(null)
 
   const lineGeometry = useMemo(() => {
     const points: number[] = []
-    const half = GRID_SIZE / 2
-    for (let i = 0; i <= GRID_SIZE; i++) {
-      const t = i - half
-      points.push(-half, 0, t, half, 0, t)
-      points.push(t, 0, -half, t, 0, half)
+    const halfX = size.x / 2
+    const halfZ = size.z / 2
+    for (let i = 0; i <= size.z; i++) {
+      const t = i - halfZ
+      points.push(-halfX, 0, t, halfX, 0, t)
+    }
+    for (let i = 0; i <= size.x; i++) {
+      const t = i - halfX
+      points.push(t, 0, -halfZ, t, 0, halfZ)
     }
     const geom = new THREE.BufferGeometry()
     geom.setAttribute(
@@ -25,7 +36,7 @@ export function BasePlane({ onAdd, enabled }: Props) {
       new THREE.Float32BufferAttribute(points, 3),
     )
     return geom
-  }, [])
+  }, [size.x, size.z])
 
   useEffect(() => {
     return () => lineGeometry.dispose()
@@ -39,8 +50,9 @@ export function BasePlane({ onAdd, enabled }: Props) {
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     if (!enabled) return
     e.stopPropagation()
-    const cell = worldToCell({ x: e.point.x, z: e.point.z }, 0)
-    if (inBounds(cell)) onAdd(cell)
+    const cell = worldToCell({ x: e.point.x, z: e.point.z }, size, 0)
+    if (!inBounds(cell, size) || isOccupied(cell)) return
+    onAdd(cell)
   }
 
   return (
@@ -51,7 +63,7 @@ export function BasePlane({ onAdd, enabled }: Props) {
         onClick={handleClick}
         receiveShadow
       >
-        <planeGeometry args={[GRID_SIZE, GRID_SIZE]} />
+        <planeGeometry args={[size.x, size.z]} />
         <meshLambertMaterial
           color="#f0e5cd"
           transparent

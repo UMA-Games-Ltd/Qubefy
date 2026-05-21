@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react'
 import { HelloScene } from './components/HelloScene'
 import { VoxelEditorScene } from './scenes/voxelEditor/VoxelEditorScene'
-import { decodeScene } from './scenes/voxelEditor/share'
-import type { Voxel } from './scenes/voxelEditor/coords'
+import { decodeScene, type DecodedScene } from './scenes/voxelEditor/share'
+import type { GridSize, Voxel } from './scenes/voxelEditor/coords'
 import { GenerateScene, type GenerationStatus } from './capture/GenerateScene'
 import type { GenerationInfo } from './capture/generateVoxelScene'
 import { PhotoCaptureButtons } from './capture/PhotoCaptureButtons'
@@ -10,17 +10,18 @@ import type { CapturedImage } from './capture/types'
 
 type View = 'hero' | 'generate' | 'editor'
 
-function readSharedScene(): Voxel[] | null {
+function readSharedScene(): DecodedScene | null {
   if (typeof window === 'undefined') return null
   const token = new URLSearchParams(window.location.search).get('s')
   return token ? decodeScene(token) : null
 }
 
 function App() {
-  const [sharedVoxels] = useState<Voxel[] | null>(readSharedScene)
-  const [view, setView] = useState<View>(sharedVoxels ? 'editor' : 'hero')
+  const [shared] = useState<DecodedScene | null>(readSharedScene)
+  const [view, setView] = useState<View>(shared ? 'editor' : 'hero')
   const [captured, setCaptured] = useState<CapturedImage | null>(null)
   const [generatedVoxels, setGeneratedVoxels] = useState<Voxel[] | null>(null)
+  const [generatedSize, setGeneratedSize] = useState<GridSize | null>(null)
   const [generationInfo, setGenerationInfo] = useState<GenerationInfo | null>(
     null,
   )
@@ -56,7 +57,8 @@ function App() {
           <VoxelEditorScene
             active={isEditor}
             onBack={() => setView(captured ? 'generate' : 'hero')}
-            initialVoxels={generatedVoxels ?? sharedVoxels ?? undefined}
+            initialVoxels={generatedVoxels ?? shared?.voxels ?? undefined}
+            initialSize={generatedSize ?? shared?.size ?? undefined}
             generationInfo={generationInfo}
             onDismissGenerationInfo={() => setGenerationInfo(null)}
           />
@@ -165,8 +167,9 @@ function App() {
                   // running so the chip can return to the same scene.
                   if (!isBusy) setCaptured(null)
                 }}
-                onComplete={(voxels, info) => {
+                onComplete={(voxels, size, info) => {
                   setGeneratedVoxels(voxels)
+                  setGeneratedSize(size)
                   setGenerationInfo(info)
                   setView('editor')
                 }}

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { BackButton } from '../../components/editor/BackButton'
@@ -11,7 +11,14 @@ import type { GenerationInfo } from '../../capture/generateVoxelScene'
 import { playAdd, playRemove } from '../../lib/sfx'
 import { BasePlane } from './BasePlane'
 import { Voxels, type NormalTuple } from './Voxels'
-import { cellKey, PALETTE, type Cell, type Voxel } from './coords'
+import {
+  cellIndex,
+  cellKey,
+  PALETTE,
+  type Cell,
+  type GridSize,
+  type Voxel,
+} from './coords'
 import { encodeScene } from './share'
 import { useVoxelEditor } from './useVoxelEditor'
 
@@ -19,6 +26,7 @@ interface Props {
   active: boolean
   onBack: () => void
   initialVoxels?: Voxel[]
+  initialSize?: GridSize
   generationInfo?: GenerationInfo | null
   onDismissGenerationInfo?: () => void
 }
@@ -27,41 +35,53 @@ export function VoxelEditorScene({
   active,
   onBack,
   initialVoxels,
+  initialSize,
   generationInfo,
   onDismissGenerationInfo,
 }: Props) {
-  const { state, dispatch, voxelList } = useVoxelEditor(initialVoxels)
+  const { state, dispatch, voxelList } = useVoxelEditor(
+    initialVoxels,
+    initialSize,
+  )
   const [showBasePlane, setShowBasePlane] = useState(true)
   const [pendingNormals] = useState<Map<string, NormalTuple>>(() => new Map())
 
+  // Drop stale click-normals from the previous scene whenever a new one loads.
+  // Without this, a coord shared by the old and new scene would inherit the
+  // old face-pop direction.
+  useEffect(() => {
+    pendingNormals.clear()
+  }, [state.sceneVersion, pendingNormals])
+
+  const isOccupied = useCallback(
+    (cell: Cell) => state.occupancy[cellIndex(cell, state.size)] === 1,
+    [state.occupancy, state.size],
+  )
+
   const handlePlaneAdd = useCallback(
     (cell: Cell) => {
-      const k = cellKey(cell)
-      if (!state.voxels.has(k)) {
-        playAdd()
-        pendingNormals.set(k, [0, 1, 0])
-      }
+      if (isOccupied(cell)) return
+      playAdd()
+      pendingNormals.set(cellKey(cell), [0, 1, 0])
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
       })
     },
-    [dispatch, pendingNormals, state.color, state.voxels],
+    [dispatch, isOccupied, pendingNormals, state.color],
   )
 
   const handleVoxelAdd = useCallback(
     (cell: Cell, normal: NormalTuple) => {
-      const k = cellKey(cell)
-      if (!state.voxels.has(k)) {
-        playAdd()
-        pendingNormals.set(k, normal)
-      }
+      if (isOccupied(cell)) return
+      playAdd()
+      pendingNormals.set(cellKey(cell), normal)
       dispatch({
         type: 'ADD_VOXEL',
         voxel: { ...cell, color: state.color },
       })
     },
-    [dispatch, pendingNormals, state.color, state.voxels],
+    [dispatch, isOccupied, pendingNormals, state.color],
   )
 
   const handleVoxelRemove = useCallback(
@@ -108,14 +128,22 @@ export function VoxelEditorScene({
           color="#f3c44a"
         />
         {showBasePlane && (
-          <BasePlane onAdd={handlePlaneAdd} enabled={state.tool === 'add'} />
+          <BasePlane
+            onAdd={handlePlaneAdd}
+            enabled={state.tool === 'add'}
+            size={state.size}
+            isOccupied={isOccupied}
+          />
         )}
         <Voxels
+          key={state.sceneVersion}
           voxels={voxelList}
+          size={state.size}
           onAdd={handleVoxelAdd}
           onRemove={handleVoxelRemove}
           tool={state.tool}
           pendingNormals={pendingNormals}
+          isOccupied={isOccupied}
         />
         <OrbitControls
           target={[0, 4, 0]}
@@ -138,7 +166,7 @@ export function VoxelEditorScene({
         visible={showBasePlane}
         onToggle={() => setShowBasePlane((v) => !v)}
       />
-      <ShareButton onShare={() => encodeScene(state.voxels)} />
+      <ShareButton onShare={() => encodeScene(state.voxels, state.size)} />
       <ColorPicker
         palette={PALETTE}
         active={state.color}

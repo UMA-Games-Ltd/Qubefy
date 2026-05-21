@@ -3,7 +3,7 @@ import { BackButton } from '../components/editor/BackButton'
 import { GENERATE_MODELS } from './models'
 import { generateVoxelScene, type GenerationInfo } from './generateVoxelScene'
 import type { CapturedImage, ComplexityPreset } from './types'
-import type { Voxel } from '../scenes/voxelEditor/coords'
+import type { GridSize, Voxel } from '../scenes/voxelEditor/coords'
 
 export interface GenerationStatus {
   generating: boolean
@@ -15,7 +15,11 @@ interface Props {
   image: CapturedImage | null
   active: boolean
   onBack: () => void
-  onComplete: (voxels: Voxel[], info: GenerationInfo | null) => void
+  onComplete: (
+    voxels: Voxel[],
+    size: GridSize,
+    info: GenerationInfo | null,
+  ) => void
   onStatusChange?: (status: GenerationStatus) => void
 }
 
@@ -178,7 +182,7 @@ export function GenerateScene({
         reasoningBufferRef.current += delta.replace(/\s+/g, ' ')
       },
     })
-      .then(({ voxels, info }) => {
+      .then(({ voxels, size, info }) => {
         if (cancelled) return
         setProgress(1)
         pushStatus({ generating: true, progress: 1, error: null })
@@ -186,7 +190,7 @@ export function GenerateScene({
           if (cancelled) return
           setGenerating(false)
           pushStatus({ generating: false, progress: 1, error: null })
-          onCompleteRef.current(voxels, info)
+          onCompleteRef.current(voxels, size, info)
         }, 250)
       })
       .catch((err: unknown) => {

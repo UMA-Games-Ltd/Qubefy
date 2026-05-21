@@ -7,6 +7,7 @@ import {
   cellToWorld,
   inBounds,
   type Cell,
+  type GridSize,
   type Voxel,
 } from './coords'
 import type { Tool } from './useVoxelEditor'
@@ -15,13 +16,17 @@ export type NormalTuple = [number, number, number]
 
 interface Props {
   voxels: Voxel[]
+  size: GridSize
   onAdd: (cell: Cell, normal: NormalTuple) => void
   onRemove: (cell: Cell) => void
   tool: Tool
   pendingNormals: Map<string, NormalTuple>
+  isOccupied: (cell: Cell) => boolean
 }
 
-const MAX_INSTANCES = 8000
+// Big enough for the 32-per-axis cap (32³ = 32 768). Drei's `<Instances>`
+// allocates this up front, but the per-frame work scales with `range`.
+const MAX_INSTANCES = 32768
 const APPEAR_DUR = 0.42
 const WOBBLE_FREQ = 14
 const WOBBLE_DECAY = 9
@@ -63,10 +68,12 @@ function easeOutBack(p: number): number {
 
 export function Voxels({
   voxels,
+  size,
   onAdd,
   onRemove,
   tool,
   pendingNormals,
+  isOccupied,
 }: Props) {
   const animRef = useRef<Map<string, AnimEntry>>(new Map())
   const refsRef = useRef<Map<string, THREE.Object3D>>(new Map())
@@ -173,7 +180,8 @@ export function Voxels({
       y: voxel.y + ny,
       z: voxel.z + nz,
     }
-    if (inBounds(target)) onAdd(target, [nx, ny, nz])
+    if (!inBounds(target, size) || isOccupied(target)) return
+    onAdd(target, [nx, ny, nz])
   }
 
   return (
@@ -187,7 +195,7 @@ export function Voxels({
       <meshStandardMaterial roughness={0.78} metalness={0} toneMapped={false} />
       {voxels.map((v) => {
         const k = cellKey(v)
-        const targetTuple = cellToWorld(v)
+        const targetTuple = cellToWorld(v, size)
         return (
           <Instance
             key={k}

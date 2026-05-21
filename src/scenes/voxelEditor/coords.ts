@@ -1,4 +1,14 @@
-export const GRID_SIZE = 20
+export interface GridSize {
+  x: number
+  y: number
+  z: number
+}
+
+export const DEFAULT_GRID_SIZE: GridSize = { x: 20, y: 20, z: 20 }
+
+// Hard sanity cap per axis. One byte in the share-URL format can carry up to
+// 255, but the editor's instancing budget and the AI prompt both target ≤ 32.
+export const MAX_GRID_AXIS = 32
 
 export type Cell = { x: number; y: number; z: number }
 export type Voxel = Cell & { color: string }
@@ -38,27 +48,38 @@ export function cellKey(c: Cell): string {
   return `${c.x},${c.y},${c.z}`
 }
 
-export function inBounds(c: Cell): boolean {
+export function cellIndex(c: Cell, size: GridSize): number {
+  return c.x + c.y * size.x + c.z * size.x * size.y
+}
+
+export function inBounds(c: Cell, size: GridSize): boolean {
   return (
     c.x >= 0 &&
-    c.x < GRID_SIZE &&
+    c.x < size.x &&
     c.y >= 0 &&
-    c.y < GRID_SIZE &&
+    c.y < size.y &&
     c.z >= 0 &&
-    c.z < GRID_SIZE
+    c.z < size.z
   )
 }
 
-export function cellToWorld(c: Cell): [number, number, number] {
-  const offset = (GRID_SIZE - 1) / 2
-  return [c.x - offset, c.y + 0.5, c.z - offset]
+// Centres the grid horizontally around the world origin; y = 0 is the ground.
+export function cellToWorld(c: Cell, size: GridSize): [number, number, number] {
+  const offsetX = (size.x - 1) / 2
+  const offsetZ = (size.z - 1) / 2
+  return [c.x - offsetX, c.y + 0.5, c.z - offsetZ]
 }
 
-export function worldToCell(p: { x: number; z: number }, y = 0): Cell {
-  const half = GRID_SIZE / 2
+export function worldToCell(
+  p: { x: number; z: number },
+  size: GridSize,
+  y = 0,
+): Cell {
+  const halfX = size.x / 2
+  const halfZ = size.z / 2
   return {
-    x: Math.floor(p.x + half),
+    x: Math.floor(p.x + halfX),
     y,
-    z: Math.floor(p.z + half),
+    z: Math.floor(p.z + halfZ),
   }
 }

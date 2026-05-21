@@ -1,20 +1,41 @@
 import { deflate, inflate } from 'pako'
-import { GRID_SIZE, PALETTE, type Voxel } from './coords'
+import {
+  DEFAULT_GRID_SIZE,
+  MAX_GRID_AXIS,
+  PALETTE,
+  type GridSize,
+  type Voxel,
+} from './coords'
 
 const MAGIC = [0x51, 0x42, 0x46, 0x59] as const // 'QBFY'
-const VERSION = 0x01
-const HEADER_LEN = 5
+const VERSION_V1 = 0x01
+const VERSION_V2 = 0x02
+const HEADER_LEN_V1 = 5
+const HEADER_LEN_V2 = 8
 const EMPTY = 0xff
-const TOTAL_CELLS = GRID_SIZE * GRID_SIZE * GRID_SIZE
 
-function buildCellArray(voxels: Map<string, Voxel>): Uint8Array {
-  const cells = new Uint8Array(TOTAL_CELLS).fill(EMPTY)
+export interface DecodedScene {
+  voxels: Voxel[]
+  size: GridSize
+}
+
+function totalCells(size: GridSize): number {
+  return size.x * size.y * size.z
+}
+
+function buildCellArray(
+  voxels: Map<string, Voxel>,
+  size: GridSize,
+): Uint8Array {
+  const cells = new Uint8Array(totalCells(size)).fill(EMPTY)
   const palette = PALETTE as readonly string[]
   for (const v of voxels.values()) {
+    if (v.x < 0 || v.x >= size.x) continue
+    if (v.y < 0 || v.y >= size.y) continue
+    if (v.z < 0 || v.z >= size.z) continue
     const idx = palette.indexOf(v.color)
     if (idx < 0) continue
-    const i = v.x + v.y * GRID_SIZE + v.z * GRID_SIZE * GRID_SIZE
-    if (i < 0 || i >= TOTAL_CELLS) continue
+    const i = v.x + v.y * size.x + v.z * size.x * size.y
     cells[i] = idx
   }
   return cells
@@ -68,17 +89,37 @@ function fromBase64Url(token: string): Uint8Array | null {
   }
 }
 
-export function encodeScene(voxels: Map<string, Voxel>): string {
-  const cells = buildCellArray(voxels)
+export function encodeScene(
+  voxels: Map<string, Voxel>,
+  size: GridSize,
+): string {
+  const cells = buildCellArray(voxels, size)
   const rle = rleEncode(cells)
-  const framed = new Uint8Array(HEADER_LEN + rle.length)
+  const framed = new Uint8Array(HEADER_LEN_V2 + rle.length)
   framed.set(MAGIC, 0)
-  framed[4] = VERSION
-  framed.set(rle, HEADER_LEN)
+  framed[4] = VERSION_V2
+  framed[5] = size.x & 0xff
+  framed[6] = size.y & 0xff
+  framed[7] = size.z & 0xff
+  framed.set(rle, HEADER_LEN_V2)
   return toBase64Url(deflate(framed))
 }
 
-export function decodeScene(token: string): Voxel[] | null {
+function isValidSize(size: GridSize): boolean {
+  return (
+    Number.isInteger(size.x) &&
+    Number.isInteger(size.y) &&
+    Number.isInteger(size.z) &&
+    size.x >= 1 &&
+    size.x <= MAX_GRID_AXIS &&
+    size.y >= 1 &&
+    size.y <= MAX_GRID_AXIS &&
+    size.z >= 1 &&
+    size.z <= MAX_GRID_AXIS
+  )
+}
+
+export function decodeScene(token: string): DecodedScene | null {
   if (!token) return null
   const compressed = fromBase64Url(token)
   if (!compressed) return null
@@ -88,26 +129,44 @@ export function decodeScene(token: string): Voxel[] | null {
   } catch {
     return null
   }
-  if (framed.length < HEADER_LEN) return null
+  if (framed.length < HEADER_LEN_V1) return null
   if (
     framed[0] !== MAGIC[0] ||
     framed[1] !== MAGIC[1] ||
     framed[2] !== MAGIC[2] ||
-    framed[3] !== MAGIC[3] ||
-    framed[4] !== VERSION
+    framed[3] !== MAGIC[3]
   )
     return null
-  const cells = rleDecode(framed.subarray(HEADER_LEN), TOTAL_CELLS)
+
+  const version = framed[4]
+  let size: GridSize
+  let payloadStart: number
+  if (version === VERSION_V1) {
+    // Legacy 20×20×20 — the hardcoded fallback for tokens that predate the
+    // size header.
+    size = DEFAULT_GRID_SIZE
+    payloadStart = HEADER_LEN_V1
+  } else if (version === VERSION_V2) {
+    if (framed.length < HEADER_LEN_V2) return null
+    size = { x: framed[5], y: framed[6], z: framed[7] }
+    if (!isValidSize(size)) return null
+    payloadStart = HEADER_LEN_V2
+  } else {
+    return null
+  }
+
+  const cells = rleDecode(framed.subarray(payloadStart), totalCells(size))
   if (!cells) return null
-  const out: Voxel[] = []
+  const voxels: Voxel[] = []
+  const sxy = size.x * size.y
   for (let i = 0; i < cells.length; i++) {
     const idx = cells[i]
     if (idx === EMPTY) continue
     if (idx >= PALETTE.length) return null
-    const x = i % GRID_SIZE
-    const y = Math.floor(i / GRID_SIZE) % GRID_SIZE
-    const z = Math.floor(i / (GRID_SIZE * GRID_SIZE))
-    out.push({ x, y, z, color: PALETTE[idx] })
+    const x = i % size.x
+    const y = Math.floor(i / size.x) % size.y
+    const z = Math.floor(i / sxy)
+    voxels.push({ x, y, z, color: PALETTE[idx] })
   }
-  return out
+  return { voxels, size }
 }
