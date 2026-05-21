@@ -122,13 +122,27 @@ function App() {
                     3D scene you can shape, paint, and share.
                   </p>
 
-                  <PhotoCaptureButtons
-                    onImage={(img) => {
-                      setCaptured(img)
-                      setView('generate')
-                    }}
-                    disabled={isBusy}
-                  />
+                  <div className="flex w-full max-w-2xl flex-col items-stretch">
+                    <PhotoCaptureButtons
+                      onImage={(img) => {
+                        setCaptured(img)
+                        setView('generate')
+                      }}
+                      disabled={isBusy}
+                    />
+                    {!isBusy &&
+                      !hasGenFailure &&
+                      (generatedVoxels !== null || shared !== null) && (
+                        <div className="mt-3 flex w-full gap-3">
+                          <div className="flex flex-[2] justify-center">
+                            <BackToEditingButton
+                              onClick={() => setView('editor')}
+                            />
+                          </div>
+                          <div className="flex-[1]" />
+                        </div>
+                      )}
+                  </div>
                 </section>
 
                 <footer className="font-hand text-base text-[#7a6755]">
@@ -150,11 +164,6 @@ function App() {
                   onClick={() => setView('generate')}
                 />
               )}
-              {!isBusy &&
-                !hasGenFailure &&
-                (generatedVoxels !== null || shared !== null) && (
-                  <BackToEditingButton onClick={() => setView('editor')} />
-                )}
             </div>
 
             {/* Generate pane */}
@@ -287,7 +296,7 @@ function BackToEditingButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="pointer-events-auto absolute bottom-6 left-1/2 z-20 inline-flex w-auto -translate-x-1/2 -rotate-[0.5deg] items-center gap-2.5 rounded-full border border-[#1f1814]/10 bg-[#fffaf0] px-5 py-2.5 font-display text-base text-[#1f1814] shadow-[0_3px_0_var(--color-paper-edge),0_22px_36px_-22px_rgba(31,24,20,0.4)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:rotate-0 active:translate-y-0"
+      className="pointer-events-auto inline-flex w-auto -rotate-[0.5deg] items-center gap-2.5 rounded-full border border-[#1f1814]/10 bg-[#fffaf0] px-5 py-2.5 font-display text-base text-[#1f1814] shadow-[0_3px_0_var(--color-paper-edge),0_22px_36px_-22px_rgba(31,24,20,0.4)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:rotate-0 active:translate-y-0"
       aria-label="Back to editing"
     >
       <EditCubeIcon />

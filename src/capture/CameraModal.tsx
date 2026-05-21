@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CapturedImage } from './types'
 
@@ -8,11 +8,14 @@ interface Props {
 }
 
 type Status = 'requesting' | 'streaming' | 'error'
+type Facing = 'environment' | 'user'
 
 const SUPPORTS_CAMERA =
   typeof navigator !== 'undefined' &&
   !!navigator.mediaDevices &&
   typeof navigator.mediaDevices.getUserMedia === 'function'
+
+const MAX_ZOOM = 4
 
 export function CameraModal({ onClose, onCapture }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -25,15 +28,29 @@ export function CameraModal({ onClose, onCapture }: Props) {
     SUPPORTS_CAMERA ? null : 'Camera not supported in this browser.',
   )
   const [mirror, setMirror] = useState(false)
+  const [facing, setFacing] = useState<Facing>('environment')
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false)
+  const [zoom, setZoom] = useState(1)
+
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  const pinchStartRef = useRef<{ dist: number; zoom: number } | null>(null)
+  const zoomRef = useRef(1)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
 
   useEffect(() => {
     if (!SUPPORTS_CAMERA) return
 
     let cancelled = false
+    setStatus('requesting')
+    setZoom(1)
+    pointersRef.current.clear()
+    pinchStartRef.current = null
 
     navigator.mediaDevices
       .getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
+        video: { facingMode: { ideal: facing } },
         audio: false,
       })
       .then((stream) => {
@@ -45,11 +62,24 @@ export function CameraModal({ onClose, onCapture }: Props) {
         if (videoRef.current) {
           videoRef.current.srcObject = stream
         }
-        // Mirror when not using the rear camera (desktop webcam or front-facing).
         const track = stream.getVideoTracks()[0]
-        const facing = track?.getSettings().facingMode
-        setMirror(facing !== 'environment')
+        const trackFacing = track?.getSettings().facingMode
+        // Mirror when using a front-facing or unknown-facing (desktop webcam) source.
+        setMirror(trackFacing !== 'environment')
         setStatus('streaming')
+
+        if (typeof navigator.mediaDevices.enumerateDevices === 'function') {
+          navigator.mediaDevices
+            .enumerateDevices()
+            .then((devices) => {
+              if (cancelled) return
+              const cams = devices.filter((d) => d.kind === 'videoinput')
+              setHasMultipleCameras(cams.length > 1)
+            })
+            .catch(() => {
+              /* enumeration is best-effort */
+            })
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -57,6 +87,11 @@ export function CameraModal({ onClose, onCapture }: Props) {
         if (name === 'NotAllowedError' || name === 'SecurityError') {
           setErrorMsg('Camera permission denied.')
         } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+          // Selfie failed — fall back to rear without showing the error screen.
+          if (facing !== 'environment') {
+            setFacing('environment')
+            return
+          }
           setErrorMsg('No camera available.')
         } else {
           setErrorMsg('Could not start the camera.')
@@ -74,6 +109,34 @@ export function CameraModal({ onClose, onCapture }: Props) {
       }
       if (video) video.srcObject = null
     }
+  }, [facing])
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointersRef.current.size === 2) {
+      const [a, b] = Array.from(pointersRef.current.values())
+      const dist = Math.hypot(a.x - b.x, a.y - b.y)
+      pinchStartRef.current = { dist, zoom: zoomRef.current }
+    }
+  }, [])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!pointersRef.current.has(e.pointerId)) return
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    const start = pinchStartRef.current
+    if (pointersRef.current.size === 2 && start) {
+      const [a, b] = Array.from(pointersRef.current.values())
+      const dist = Math.hypot(a.x - b.x, a.y - b.y)
+      const next = start.zoom * (dist / start.dist)
+      setZoom(Math.max(1, Math.min(MAX_ZOOM, next)))
+    }
+  }, [])
+
+  const onPointerEnd = useCallback((e: React.PointerEvent) => {
+    pointersRef.current.delete(e.pointerId)
+    if (pointersRef.current.size < 2) {
+      pinchStartRef.current = null
+    }
   }, [])
 
   const handleSnap = () => {
@@ -83,18 +146,26 @@ export function CameraModal({ onClose, onCapture }: Props) {
     const height = video.videoHeight
     if (!width || !height) return
 
+    const z = zoomRef.current
+    const sw = width / z
+    const sh = height / z
+    const sx = (width - sw) / 2
+    const sy = (height - sh) / 2
+    const outW = Math.round(sw)
+    const outH = Math.round(sh)
+
     const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
+    canvas.width = outW
+    canvas.height = outH
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     if (mirror) {
-      ctx.translate(width, 0)
+      ctx.translate(outW, 0)
       ctx.scale(-1, 1)
     }
-    ctx.drawImage(video, 0, 0, width, height)
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH)
     const dataUrl = canvas.toDataURL('image/jpeg', 0.9)
-    onCapture({ dataUrl, width, height })
+    onCapture({ dataUrl, width: outW, height: outH })
   }
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,15 +180,23 @@ export function CameraModal({ onClose, onCapture }: Props) {
   if (typeof document === 'undefined') return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-[#0d0a08]">
+    <div className="fixed inset-0 z-50 touch-none bg-[#0d0a08]">
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        style={{
+          transform: `${mirror ? 'scaleX(-1) ' : ''}scale(${zoom})`,
+          transformOrigin: 'center center',
+        }}
         className={`absolute inset-0 h-full w-full object-cover ${
           status === 'streaming' ? '' : 'hidden'
-        } ${mirror ? '[transform:scaleX(-1)]' : ''}`}
+        }`}
       />
 
       {status === 'requesting' && (
@@ -169,14 +248,46 @@ export function CameraModal({ onClose, onCapture }: Props) {
         </svg>
       </button>
 
+      {status === 'streaming' && hasMultipleCameras && (
+        <button
+          type="button"
+          onClick={() =>
+            setFacing((f) => (f === 'environment' ? 'user' : 'environment'))
+          }
+          className="absolute right-5 top-20 z-10 grid h-11 w-11 place-items-center rounded-full bg-[#fffaf0]/90 text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge),0_18px_28px_-12px_rgba(0,0,0,0.6)] backdrop-blur transition-transform duration-200 active:rotate-180"
+          aria-label={
+            facing === 'environment'
+              ? 'Switch to selfie camera'
+              : 'Switch to rear camera'
+          }
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 7v5h-5" />
+            <path d="M3 17v-5h5" />
+            <path d="M21 12a9 9 0 0 1-15.36 6.36" />
+            <path d="M3 12a9 9 0 0 1 15.36-6.36" />
+            <circle cx="12" cy="12" r="2.5" />
+          </svg>
+        </button>
+      )}
+
       {status === 'streaming' && (
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center px-6 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-8">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center px-6 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-8">
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-[#0d0a08]/85 to-transparent" />
           <button
             type="button"
             onClick={handleSnap}
             aria-label="Snap photo"
-            className="group relative grid h-20 w-20 place-items-center rounded-full bg-[#fffaf0] shadow-[0_4px_0_#b94f31,0_18px_28px_-12px_rgba(0,0,0,0.6)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 active:translate-y-0.5"
+            className="pointer-events-auto group relative grid h-20 w-20 place-items-center rounded-full bg-[#fffaf0] shadow-[0_4px_0_#b94f31,0_18px_28px_-12px_rgba(0,0,0,0.6)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 active:translate-y-0.5"
           >
             <span className="h-14 w-14 rounded-full bg-[#dd6a4a] transition-transform duration-150 group-active:scale-90" />
           </button>
