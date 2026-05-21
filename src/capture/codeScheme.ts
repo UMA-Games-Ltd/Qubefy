@@ -102,10 +102,22 @@ function stripJsonNoise(raw: string): string {
 }
 
 function parseScene(raw: string): RawCodeScene {
+  const stripped = stripJsonNoise(raw)
   try {
-    return JSON.parse(stripJsonNoise(raw)) as RawCodeScene
-  } catch {
-    throw new ChatError(200, raw, 'Model returned non-JSON content')
+    return JSON.parse(stripped) as RawCodeScene
+  } catch (err) {
+    // Distinguish truncation (unclosed string/object — the common reasoning-ate-the-budget
+    // case) from genuinely-non-JSON prose. Helps the user pick the right next step.
+    const opens = (stripped.match(/[{[]/g) || []).length
+    const closes = (stripped.match(/[}\]]/g) || []).length
+    const looksTruncated =
+      opens > closes ||
+      !stripped.trimEnd().endsWith('}') ||
+      (err instanceof SyntaxError && /Unterminated|Unexpected end/i.test(err.message))
+    const msg = looksTruncated
+      ? `Model output was cut off mid-JSON (${stripped.length} chars, ${opens} opens / ${closes} closes). Likely hit the token limit — try a smaller complexity or a non-reasoning model.`
+      : 'Model returned non-JSON content'
+    throw new ChatError(200, raw, msg)
   }
 }
 

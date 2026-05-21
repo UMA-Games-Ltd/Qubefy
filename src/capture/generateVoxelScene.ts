@@ -132,9 +132,9 @@ async function downsizeImage(image: CapturedImage): Promise<string> {
 }
 
 function maxTokensFor(complexity: ComplexityPreset): number {
-  if (complexity === 'high') return 8000
-  if (complexity === 'medium') return 5000
-  return 3000
+  if (complexity === 'high') return 16000
+  if (complexity === 'medium') return 10000
+  return 6000
 }
 
 export interface GenerationInfo {
@@ -235,8 +235,16 @@ export async function generateVoxelScene(
       200,
       { finishReason },
       finishReason === 'length'
-        ? 'Model hit the token limit before finishing — try a smaller complexity'
+        ? 'Model hit the token limit before producing any output — reasoning likely consumed the entire budget. Try a smaller complexity or a non-reasoning model.'
         : 'Model returned empty content',
+    )
+  }
+
+  if (finishReason === 'length') {
+    throw new ChatError(
+      200,
+      { finishReason, contentChars: content.length },
+      'Model hit the token limit mid-response — the JSON is truncated. Try a smaller complexity or a non-reasoning model.',
     )
   }
 
