@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { BackButton } from '../components/editor/BackButton'
-import { GENERATE_MODELS } from './models'
 import { generateVoxelScene, type GenerationInfo } from './generateVoxelScene'
 import type { CapturedImage, ComplexityPreset } from './types'
 import type { GridSize, Voxel } from '../scenes/voxelEditor/coords'
+
+const MODEL_ID = 'google/gemini-3.5-flash'
 
 export interface GenerationStatus {
   generating: boolean
@@ -44,7 +45,6 @@ export function GenerateScene({
   onComplete,
   onStatusChange,
 }: Props) {
-  const [modelId, setModelId] = useState<string>('google/gemini-3.5-flash')
   const [complexity, setComplexity] = useState<ComplexityPreset>('medium')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -66,15 +66,30 @@ export function GenerateScene({
   // mutating `onComplete`) would spawn a new fetch each time and exhaust the
   // browser's resource budget with multi-MB image payloads.
   const imageRef = useRef(image)
-  const modelIdRef = useRef(modelId)
   const complexityRef = useRef(complexity)
   const onCompleteRef = useRef(onComplete)
   const onStatusChangeRef = useRef(onStatusChange)
   imageRef.current = image
-  modelIdRef.current = modelId
   complexityRef.current = complexity
   onCompleteRef.current = onComplete
   onStatusChangeRef.current = onStatusChange
+
+  // Clear stale display state when the image swaps — covers the case where
+  // the user navigates back into this scene after a completed generation and
+  // would otherwise see the previous run's progress bar pinned at 100% and
+  // the old reasoning ticker text.
+  const lastImageRef = useRef<CapturedImage | null>(null)
+  useEffect(() => {
+    if (image === lastImageRef.current) return
+    lastImageRef.current = image
+    if (generating) return
+    setProgress(0)
+    setError(null)
+    reasoningBufferRef.current = ''
+    displayedCharsRef.current = 0
+    if (tickerTextRef.current) tickerTextRef.current.textContent = ''
+    if (tickerScrollRef.current) tickerScrollRef.current.scrollLeft = 0
+  }, [image, generating])
 
   // Push status changes directly from the callsite that produces them — not
   // via a useEffect on [generating, progress, error]. The effect form re-fired
@@ -158,7 +173,7 @@ export function GenerateScene({
     }
     rafRef.current = requestAnimationFrame(tick)
 
-    generateVoxelScene(img, modelIdRef.current, complexityRef.current, {
+    generateVoxelScene(img, MODEL_ID, complexityRef.current, {
       onProgress: ({ chars, maxTokens }) => {
         if (cancelled) return
         if (!receivedFirstChunk) {
@@ -247,7 +262,7 @@ export function GenerateScene({
           Generate scene
         </h2>
         <p className="mt-4 max-w-xl text-center text-base font-semibold text-[#3d2f25] sm:text-lg">
-          Pick a model and how detailed it should be.
+          Pick how detailed it should be.
         </p>
 
         <div className="mt-8 grid w-full gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -276,43 +291,6 @@ export function GenerateScene({
 
           {/* Controls */}
           <div className="flex flex-col gap-6">
-            <section>
-              <h3 className="font-display text-2xl text-[#1f1814]">Model</h3>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {GENERATE_MODELS.map((m) => {
-                  const selected = m.id === modelId
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => setModelId(m.id)}
-                      disabled={generating}
-                      className={[
-                        'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
-                        selected
-                          ? 'bg-[#dd6a4a] text-[#fff8ec] shadow-[0_2px_0_#b94f31] hover:-translate-y-0.5'
-                          : 'border border-[#1f1814]/10 bg-[#fffaf0] text-[#1f1814] shadow-[0_2px_0_var(--color-paper-edge)] hover:-translate-y-0.5',
-                        generating ? 'pointer-events-none opacity-60' : '',
-                      ].join(' ')}
-                    >
-                      {m.label}
-                      {m.tag && (
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                            selected
-                              ? 'bg-[#fff8ec]/25 text-[#fff8ec]'
-                              : 'bg-[#1f1814]/8 text-[#7a6755]'
-                          }`}
-                        >
-                          {m.tag}
-                        </span>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-
             <section>
               <h3 className="font-display text-2xl text-[#1f1814]">Complexity</h3>
               <div className="mt-3 grid grid-cols-3 gap-2">

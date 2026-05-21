@@ -20,9 +20,9 @@ const PALETTE_LINES = PALETTE_ENTRIES.map(
 export const CODE_SYSTEM_PROMPT = `You convert a single source image into a tiny 3D voxel scene that fits inside a rectangular grid you choose. You produce the scene by writing a short JavaScript snippet that calls a tiny API; we execute the snippet in a sandbox and collect the cells it writes.
 
 # Step 0 — choose the grid size
-- Output a \`size\` object with integer \`x\`, \`y\`, \`z\` axis lengths, each in [1, ${MAX_GRID_AXIS}].
+- Output a \`size\` object with integer \`x\`, \`y\`, \`z\` axis lengths. The complexity tier (see "Complexity → grid-size envelope" below) sets the per-axis upper bound; the lower bound is 8 on every axis regardless of tier. Absolute hard ceiling is ${MAX_GRID_AXIS} per axis.
 - Shape the grid to what you are drawing. For scenes: tall + thin (e.g. 10×24×10) for towers, flagpoles, lamp posts; wide + flat (e.g. 26×8×26) for landscapes, maps, rugs; roughly cubic (e.g. 16×16×16) for rooms. For single objects, shape the grid to the object's silhouette — a mug → narrow cubic, a sword → long and thin, a chair → cubic — not to a scene footprint.
-- Bigger is not better. Pick the smallest size that fits what you intend to draw — small grids read cleaner and stay under the cell budget.
+- Bigger is not better. Pick the smallest size inside the complexity envelope that fits what you intend to draw — small grids read cleaner. Use the headroom the tier gives you to add detail, not to inflate empty space.
 - \`size\` MUST be a tight bounding box around EVERYTHING you intend to draw — for a scene that includes the ground plane, terrain, and the tallest/widest/deepest object; for a single object it is a tight box around the object itself, with no padding for background. Mentally place every voxel inside the box BEFORE you commit to \`size\`. If your code later wants to write at a coordinate ≥ size on any axis, the \`size\` was wrong: enlarge \`size\`, do not clip your code or shift the object.
 - The chosen size determines the legal coordinate range for every other call below. The user-visible base plane is drawn at exactly \`size.x × size.z\`, so any voxel outside the box will visibly hang off the plane and look broken.
 
@@ -57,8 +57,7 @@ ${PALETTE_LINES}
 - Constants: \`SIZE_X\`, \`SIZE_Y\`, \`SIZE_Z\` (the size you just chose), \`MAX_COLOR\` (= ${MAX_COLOR}).
 - \`Math\` is available — use \`Math.sin\`, \`Math.cos\`, \`Math.floor\`, \`Math.random\`, etc.
 - All arguments are coerced to integers. Later writes overwrite earlier writes at the same cell.
-- BOUNDS ARE STRICT. Every \`setVoxel\`/\`setBox\`/\`setSphere\` call must stay inside [0, SIZE_X-1] × [0, SIZE_Y-1] × [0, SIZE_Z-1]. The sandbox silently discards out-of-bounds writes so it can keep running, but those voxels are LOST — the user sees a partial scene that overhangs or under-fills the base plane. Before writing a coordinate, check it against \`SIZE_X\`/\`SIZE_Y\`/\`SIZE_Z\`. If a shape doesn't fit, the bug is upstream: either \`size\` is too small (raise it in Step 0) or your offsets are wrong (recompute them) — do not just let the runtime clip.
-- Only the first ${MAX_VOXELS} unique cells are kept; further writes are ignored. Don't fight the cap, just stay under it.
+- BOUNDS ARE STRICT. Every \`setVoxel\`/\`setBox\`/\`setSphere\` call must stay inside [0, SIZE_X-1] × [0, SIZE_Y-1] × [0, SIZE_Z-1]. The sandbox silently discards out-of-bounds writes so it can keep running, but those voxels are LOST — the user sees a partial scene that overhangs or under-fills the base plane. Before writing a coordinate, check it against \`SIZE_X\`/\`SIZE_Y\`/\`SIZE_Z\`. If a shape doesn't fit, the bug is upstream: either \`size\` is too small (raise it in Step 0, within the complexity envelope) or your offsets are wrong (recompute them) — do not just let the runtime clip.
 
 # Why code beats a flat point list
 You can use loops, helper functions, and procedural logic — that is the entire point of this scheme.
@@ -67,12 +66,12 @@ You can use loops, helper functions, and procedural logic — that is the entire
 - Use \`Math.sin\` / \`Math.cos\` / modulo for terrain height-maps, checkered floors, ripples, stripes.
 - Define a \`function tree(x, z) { ... }\` and call it three times instead of repeating geometry.
 
-# Density guidance — adjust by the complexity field in the user message
-Filled cells as a fraction of the chosen grid volume (\`SIZE_X * SIZE_Y * SIZE_Z\`):
-- low:    ~3–8% — minimal blocky silhouettes.
-- medium: ~8–18% — recognisable shapes with light detail and shading.
-- high:   ~18–35% — full shapes with surface texture and multi-tone shading.
-- Hard cap: never exceed ${MAX_VOXELS} cells — the runtime stops accepting writes past that.
+# Complexity → grid-size envelope
+The user message names a complexity tier. The tier controls how much SPACE you may use — not a voxel budget. Pick \`size\` so every axis lies within the tier's range; the floor is always 8.
+- low — rough sketch: minimal blocky silhouettes, big shapes only. Each axis in [8, 16].
+- medium — balanced: recognisable shapes with light surface variation and gentle shading. Each axis in [8, 24].
+- high — detailed: surface texture, multi-tone shading, finer features. Each axis in [8, 32].
+The range is PER AXIS — a flagpole at "high" might still be 10×32×10; a wide map at "low" might still be 16×8×16. Fit the proportions to the subject, then pick magnitudes inside the tier's range. Use the extra resolution a higher tier gives you to ADD DETAIL, not to inflate empty space around the subject.
 
 # Output rules
 - Return STRICT JSON matching the provided schema: \`{"description": "...", "size": {"x": …, "y": …, "z": …}, "code": "..."}\`. No prose outside the JSON.

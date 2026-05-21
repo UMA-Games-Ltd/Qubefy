@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { BackButton } from '../../components/editor/BackButton'
-import { BasePlaneToggle } from '../../components/editor/BasePlaneToggle'
 import { ColorPicker } from '../../components/editor/ColorPicker'
 import { GenerationInfoPanel } from '../../components/editor/GenerationInfoPanel'
+import { HomeButton } from '../../components/editor/HomeButton'
 import { ShareButton } from '../../components/editor/ShareButton'
 import { Toolbar } from '../../components/editor/Toolbar'
 import type { GenerationInfo } from '../../capture/generateVoxelScene'
@@ -25,6 +25,7 @@ import { useVoxelEditor } from './useVoxelEditor'
 interface Props {
   active: boolean
   onBack: () => void
+  onHome: () => void
   initialVoxels?: Voxel[]
   initialSize?: GridSize
   generationInfo?: GenerationInfo | null
@@ -34,6 +35,7 @@ interface Props {
 export function VoxelEditorScene({
   active,
   onBack,
+  onHome,
   initialVoxels,
   initialSize,
   generationInfo,
@@ -43,7 +45,6 @@ export function VoxelEditorScene({
     initialVoxels,
     initialSize,
   )
-  const [showBasePlane, setShowBasePlane] = useState(true)
   const [pendingNormals] = useState<Map<string, NormalTuple>>(() => new Map())
 
   // Drop stale click-normals from the previous scene whenever a new one loads.
@@ -127,14 +128,12 @@ export function VoxelEditorScene({
           intensity={0.28}
           color="#f3c44a"
         />
-        {showBasePlane && (
-          <BasePlane
-            onAdd={handlePlaneAdd}
-            enabled={state.tool === 'add'}
-            size={state.size}
-            isOccupied={isOccupied}
-          />
-        )}
+        <BasePlane
+          onAdd={handlePlaneAdd}
+          enabled={state.tool === 'add'}
+          size={state.size}
+          isOccupied={isOccupied}
+        />
         <Voxels
           key={state.sceneVersion}
           voxels={voxelList}
@@ -156,16 +155,13 @@ export function VoxelEditorScene({
       </Canvas>
 
       <BackButton onClick={onBack} />
+      <HomeButton onClick={onHome} />
       {generationInfo && (
         <GenerationInfoPanel
           info={generationInfo}
           onDismiss={onDismissGenerationInfo}
         />
       )}
-      <BasePlaneToggle
-        visible={showBasePlane}
-        onToggle={() => setShowBasePlane((v) => !v)}
-      />
       <ShareButton onShare={() => encodeScene(state.voxels, state.size)} />
       <ColorPicker
         palette={PALETTE}

@@ -57,6 +57,7 @@ function App() {
           <VoxelEditorScene
             active={isEditor}
             onBack={() => setView(captured ? 'generate' : 'hero')}
+            onHome={() => setView('hero')}
             initialVoxels={generatedVoxels ?? shared?.voxels ?? undefined}
             initialSize={generatedSize ?? shared?.size ?? undefined}
             generationInfo={generationInfo}
@@ -149,6 +150,11 @@ function App() {
                   onClick={() => setView('generate')}
                 />
               )}
+              {!isBusy &&
+                !hasGenFailure &&
+                (generatedVoxels !== null || shared !== null) && (
+                  <BackToEditingButton onClick={() => setView('editor')} />
+                )}
             </div>
 
             {/* Generate pane */}
@@ -273,6 +279,41 @@ function GenerationChip({
         </div>
       )}
     </button>
+  )
+}
+
+function BackToEditingButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="pointer-events-auto absolute bottom-6 left-1/2 z-20 inline-flex w-auto -translate-x-1/2 -rotate-[0.5deg] items-center gap-2.5 rounded-full border border-[#1f1814]/10 bg-[#fffaf0] px-5 py-2.5 font-display text-base text-[#1f1814] shadow-[0_3px_0_var(--color-paper-edge),0_22px_36px_-22px_rgba(31,24,20,0.4)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:rotate-0 active:translate-y-0"
+      aria-label="Back to editing"
+    >
+      <EditCubeIcon />
+      <span>Back to editing</span>
+    </button>
+  )
+}
+
+function EditCubeIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+      <path d="M12 12l8-4.5" />
+      <path d="M12 12L4 7.5" />
+      <path d="M12 12v9" />
+    </svg>
   )
 }
 
